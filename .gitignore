@@ -1,0 +1,33 @@
+# data / exports / staging
+data/
+exports/
+media/
+messages/
+wechat-export-win/
+*.jsonl
+manifest.json
+state.json
+report.md
+*.zip
+
+# local db / logs / temp
+*.db
+*.sqlite
+*.log
+*.tmp
+tmp/
+
+# env / secrets
+.env
+.env.*
+!.env.example
+
+# python
+.venv/
+__pycache__/
+*.pyc
+.ruff_cache/
+
+# os
+.DS_Store
+Thumbs.db
