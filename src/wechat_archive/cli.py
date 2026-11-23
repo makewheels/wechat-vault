@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import tempfile
 from dataclasses import replace
 
 from . import verify
@@ -24,7 +25,9 @@ def _parser() -> argparse.ArgumentParser:
     p_init.add_argument("--dry-run", action="store_true")
 
     p_import = sub.add_parser("import-staging", help="导入 Windows 暂存包")
-    p_import.add_argument("--dir", required=True, help="wechat-export-win 目录")
+    source = p_import.add_mutually_exclusive_group(required=True)
+    source.add_argument("--dir", help="本地 wechat-export-win 目录")
+    source.add_argument("--oss-prefix", help="OSS 暂存前缀，如 staging/win/<run_id>")
     p_import.add_argument("--limit", type=int, default=None, help="最多导入多少条消息（冒烟）")
     p_import.add_argument("--no-media", action="store_true", help="只导消息，不碰媒体")
     p_import.add_argument("--dry-run", action="store_true", help="只读，不写云")
@@ -34,6 +37,7 @@ def _parser() -> argparse.ArgumentParser:
     p_sync.add_argument("--media", action="store_true", help="同步时一并处理媒体")
     p_sync.add_argument("--limit-convs", type=int, default=None)
     p_sync.add_argument("--conv", default=None, help="只同步一个 talker")
+    p_sync.add_argument("--my-wxid", default=None, help="自己的 wxid（推断失败时用）")
     p_sync.add_argument("--page-size", type=int, default=200)
 
     p_media = sub.add_parser("media", help="处理 wx_media_tasks 里的待办媒体")
@@ -46,6 +50,24 @@ def _parser() -> argparse.ArgumentParser:
 
     sub.add_parser("stats", help="各表行数")
     return parser
+
+
+def _run_import(package: StagingPackage, config: Config, args) -> int:
+    print(
+        f"[import] {package.root} source={package.source} account={package.account_id}",
+        flush=True,
+    )
+    stats = import_staging(
+        package,
+        None if args.dry_run else _store(config),
+        None if args.dry_run or args.no_media else _oss(config),
+        config=config,
+        limit=args.limit,
+        no_media=args.no_media,
+        dry_run=args.dry_run,
+    )
+    print(f"[import] {stats}")
+    return 0
 
 
 def _store(config: Config) -> TableStore:
@@ -85,23 +107,12 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "import-staging":
+            if args.oss_prefix:
+                with tempfile.TemporaryDirectory(prefix="wechat-staging-") as tmp:
+                    package = StagingPackage.from_oss(_oss(config), args.oss_prefix, tmp)
+                    return _run_import(package, config, args)
             package = StagingPackage(args.dir)
-            print(
-                f"[import] {package.root} source={package.source} "
-                f"account={package.account_id}",
-                flush=True,
-            )
-            stats = import_staging(
-                package,
-                None if args.dry_run else _store(config),
-                None if args.dry_run or args.no_media else _oss(config),
-                config=config,
-                limit=args.limit,
-                no_media=args.no_media,
-                dry_run=args.dry_run,
-            )
-            print(f"[import] {stats}")
-            return 0
+            return _run_import(package, config, args)
 
         if args.command == "sync":
             store = _store(config)
@@ -114,6 +125,7 @@ def main(argv: list[str] | None = None) -> int:
                 include_media=args.media,
                 limit_convs=args.limit_convs,
                 talker=args.conv,
+                my_wxid=args.my_wxid,
                 page_size=args.page_size,
             )
             print(f"[sync] {stats}")

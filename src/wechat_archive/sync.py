@@ -17,7 +17,7 @@ from .store.tablestore import TableStore
 
 def infer_account(client: WeFlowClient, sessions: list[dict]) -> tuple[str, str] | None:
     """Return (my_wxid, account_id) by looking for an outgoing message."""
-    for session in sessions[:40]:
+    for session in sessions[:200]:
         talker = str(session.get("username") or "")
         if not talker:
             continue
@@ -44,6 +44,7 @@ def sync_mac(
     include_media: bool = False,
     limit_convs: int | None = None,
     talker: str | None = None,
+    my_wxid: str | None = None,
     page_size: int = 200,
     log: Callable[[str], None] = print,
 ) -> dict[str, int]:
@@ -60,9 +61,12 @@ def sync_mac(
     if not sessions:
         return {"sessions": 0, "messages": 0, "written": 0, "duplicates": 0, "media": 0, "errors": 0}
 
-    account = infer_account(client, sessions)
+    if my_wxid:
+        account = (my_wxid, "a" + hashlib.sha1(my_wxid.encode("utf-8")).hexdigest()[:12])
+    else:
+        account = infer_account(client, sessions)
     if not account:
-        raise RuntimeError("无法从消息推断 my_wxid；先确认 WeFlow 能返回带 isSend=1 的消息")
+        raise RuntimeError("无法从消息推断 my_wxid；用 --my-wxid 指定，或确认 WeFlow 能返回 isSend=1 的消息")
     my_wxid, account_id = account
     store.put_account(account_id, my_wxid=my_wxid, name="", source=config.source)
     log(f"[sync] account={account_id} sessions={len(sessions)} source={config.source}")

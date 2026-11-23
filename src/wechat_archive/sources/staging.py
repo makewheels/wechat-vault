@@ -45,6 +45,23 @@ class StagingPackage:
     def source(self) -> str:
         return str(self.manifest.get("source") or "win")
 
+    @classmethod
+    def from_oss(cls, oss, prefix: str, root: str | Path) -> StagingPackage:
+        """Materialize staging metadata (not media) from OSS into a temp dir."""
+        root = Path(root)
+        (root / "messages").mkdir(parents=True, exist_ok=True)
+        (root / "media").mkdir(parents=True, exist_ok=True)
+        prefix = prefix.rstrip("/")
+        oss.get_to_file(f"{prefix}/manifest.json", root / "manifest.json")
+        for name in ("sessions.jsonl", "contacts.jsonl", "errors.jsonl", "state.json"):
+            key = f"{prefix}/{name}"
+            if oss.exists(key):
+                oss.get_to_file(key, root / name)
+        for key in oss.list_keys(f"{prefix}/messages/"):
+            if key.endswith(".jsonl"):
+                oss.get_to_file(key, root / "messages" / Path(key).name)
+        return cls(root)
+
     def sessions(self) -> Iterator[Conversation]:
         path = self.root / "sessions.jsonl"
         if not path.exists():

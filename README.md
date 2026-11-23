@@ -10,7 +10,7 @@
 ## 当前状态
 
 - 设计定稿（2026-11-22）：同一个微信号、Mac/Windows 都用 WeFlow、媒体全量（含视频解密）、新建 Tablestore 实例、全量会话含公众号。
-- Mac 侧 CLI 已实现：`init` / `import-staging` / `sync` / `media` / `verify` / `stats`，17 个单测通过。
+- Mac 侧 CLI 已实现：`init` / `import-staging` / `sync` / `media` / `verify` / `stats`，18 个单测通过。
 - Windows 侧按 `HANDOFF-WINDOWS.md` 产出暂存包；Mac 用 `import-staging` 入库。
 - 云资源（Tablestore 实例、OSS bucket、RAM）未创建；跑 `init` 前先注入凭据。
 
@@ -32,9 +32,12 @@ uv run wechat-archive import-staging --dir /path/to/wechat-export-win --limit 50
 
 # 3) 导入（媒体已在 OSS 则只 HEAD；本地有 media/ 则上传）
 uv run wechat-archive import-staging --dir /path/to/wechat-export-win
+# 或者 Windows 已上传到 OSS 暂存前缀：
+uv run wechat-archive import-staging --oss-prefix staging/win/<run_id>
 
 # 4) Mac 自己从 WeFlow 增量/全量
 uv run wechat-archive sync --source mac --full
+# 推断不到自己的 wxid 时：uv run wechat-archive sync --source mac --my-wxid wxid_xxx
 uv run wechat-archive sync --source mac --media --limit-convs 3   # 冒烟
 
 # 5) 校验

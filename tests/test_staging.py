@@ -104,3 +104,30 @@ def test_missing_sessions_is_empty(tmp_path):
     package = StagingPackage(tmp_path)
     assert list(package.sessions()) == []
     assert list(package.messages()) == []
+
+
+class FakeOSS:
+    def __init__(self, files):
+        self.files = files
+
+    def exists(self, key):
+        return key in self.files
+
+    def get_to_file(self, key, path):
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        Path(path).write_bytes(self.files[key])
+
+    def list_keys(self, prefix):
+        return [key for key in self.files if key.startswith(prefix)]
+
+
+def test_staging_from_oss(tmp_path):
+    local = tmp_path / "local"
+    write_package(local)
+    files = {}
+    for path in local.rglob("*"):
+        if path.is_file() and "media" not in path.parts:
+            files["staging/win/run1/" + path.relative_to(local).as_posix()] = path.read_bytes()
+    package = StagingPackage.from_oss(FakeOSS(files), "staging/win/run1", tmp_path / "fetch")
+    assert package.account_id == "a123"
+    assert [m.msg_uid for m in package.messages()] == ["s1", "s2"]
