@@ -33,7 +33,7 @@ class Config:
 
     @classmethod
     def from_env(cls) -> Config:
-        instance = _first("TABLESTORE_INSTANCE", default="wechat-archive")
+        instance = _first("TABLESTORE_INSTANCE", default="wechat-vault")
         region = _first("OSS_REGION", "TABLESTORE_REGION", default="cn-beijing")
         endpoint = _first(
             "TABLESTORE_ENDPOINT",
@@ -42,7 +42,7 @@ class Config:
         return cls(
             endpoint=endpoint,
             instance=instance,
-            bucket=_first("OSS_BUCKET", default="wechat-archive"),
+            bucket=_first("OSS_BUCKET", default="wechat-vault"),
             oss_endpoint=_first(
                 "OSS_ENDPOINT", default=f"https://oss-{region}.aliyuncs.com"
             ),
@@ -59,7 +59,7 @@ class Config:
             ),
             weflow_api=_first("WEFLOW_API", default="http://127.0.0.1:5031"),
             weflow_token=_first("WEFLOW_ACCESS_TOKEN"),
-            source=_first("WECHAT_ARCHIVE_SOURCE", default="mac"),
+            source=_first("WECHAT_VAULT_SOURCE", default="mac"),
         )
 
     def require_cloud(self) -> None:
@@ -70,7 +70,7 @@ class Config:
             missing.append("ALIBABA_CLOUD_ACCESS_KEY_SECRET")
         if missing:
             raise ConfigError(
-                "缺少云凭据: " + ", ".join(missing) + "（从 Infisical tools/dev /wechat-archive 注入）"
+                "缺少云凭据: " + ", ".join(missing) + "（从 Infisical tools/dev /wechat-vault 注入）"
             )
 
     def require_weflow(self) -> None:

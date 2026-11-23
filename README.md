@@ -1,4 +1,4 @@
-# wechat-archive
+# wechat-vault
 
 微信聊天归档：WeFlow（读微信本地库）→ Tablestore（消息/会话/同步状态）+ OSS（解密后的媒体）。
 
@@ -6,6 +6,7 @@
 
 - [DESIGN.md](DESIGN.md)：总体设计、表结构、去重规则、媒体解密、成本、实施阶段。
 - [HANDOFF-WINDOWS.md](HANDOFF-WINDOWS.md)：给 Windows 机器的 AI 的交接契约（暂存包格式、导出算法、验收）。
+- [LICENSE](LICENSE)：MIT。
 
 ## 当前状态
 
@@ -25,24 +26,24 @@ export ALIBABA_CLOUD_ACCESS_KEY_SECRET=...
 export WEFLOW_ACCESS_TOKEN=...          # platform-accounts/dev /weflow
 
 # 1) 建表（幂等）
-uv run wechat-archive init
+uv run wechat-vault init
 
 # 2) 先看 Windows 暂存包，不写云
-uv run wechat-archive import-staging --dir /path/to/wechat-export-win --limit 500 --dry-run
+uv run wechat-vault import-staging --dir /path/to/wechat-export-win --limit 500 --dry-run
 
 # 3) 导入（媒体已在 OSS 则只 HEAD；本地有 media/ 则上传）
-uv run wechat-archive import-staging --dir /path/to/wechat-export-win
+uv run wechat-vault import-staging --dir /path/to/wechat-export-win
 # 或者 Windows 已上传到 OSS 暂存前缀：
-uv run wechat-archive import-staging --oss-prefix staging/win/<run_id>
+uv run wechat-vault import-staging --oss-prefix staging/win/<run_id>
 
 # 4) Mac 自己从 WeFlow 增量/全量
-uv run wechat-archive sync --source mac --full
-# 推断不到自己的 wxid 时：uv run wechat-archive sync --source mac --my-wxid wxid_xxx
-uv run wechat-archive sync --source mac --media --limit-convs 3   # 冒烟
+uv run wechat-vault sync --source mac --full
+# 推断不到自己的 wxid 时：uv run wechat-vault sync --source mac --my-wxid wxid_xxx
+uv run wechat-vault sync --source mac --media --limit-convs 3   # 冒烟
 
 # 5) 校验
-uv run wechat-archive verify
-uv run wechat-archive stats
+uv run wechat-vault verify
+uv run wechat-vault stats
 ```
 
 ## 命令
@@ -59,6 +60,10 @@ uv run wechat-archive stats
 ## 表
 
 `wx_accounts`、`wx_conversations`、`wx_messages`、`wx_contacts`、`wx_sync_state`、`wx_media_tasks`、`wx_conflicts`。字段和主键见 `DESIGN.md`。
+
+## 免责声明
+
+本项目仅用于导出、归档**自己的**微信聊天记录。读取/解密本地微信数据库可能违反微信用户协议；使用者需自行确认合规并承担风险。项目不包含解密实现，依赖 WeFlow。作者不对数据丢失、账号风控或滥用负责。
 
 ## 边界
 

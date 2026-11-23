@@ -1452,7 +1452,7 @@ wheels = [
 ]
 
 [[package]]
-name = "wechat-archive"
+name = "wechat-vault"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

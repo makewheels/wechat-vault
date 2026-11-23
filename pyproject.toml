@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "wechat-archive"
+name = "wechat-vault"
 version = "0.1.0"
 description = "WeChat chat archive: WeFlow -> Tablestore + OSS"
 requires-python = ">=3.11"
@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.scripts]
-wechat-archive = "wechat_archive.cli:main"
+wechat-vault = "wechat_vault.cli:main"
 
 [dependency-groups]
 dev = [
@@ -22,7 +22,7 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/wechat_archive"]
+packages = ["src/wechat_vault"]
 
 [tool.ruff]
 line-length = 100

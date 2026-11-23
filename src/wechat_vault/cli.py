@@ -17,8 +17,8 @@ from .sync import process_media_tasks, sync_mac
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="wechat-archive", description="微信聊天归档：WeFlow -> Tablestore + OSS")
-    parser.add_argument("--source", default="", help="源标识，默认取 WECHAT_ARCHIVE_SOURCE 或 mac")
+    parser = argparse.ArgumentParser(prog="wechat-vault", description="微信聊天归档：WeFlow -> Tablestore + OSS")
+    parser.add_argument("--source", default="", help="源标识，默认取 WECHAT_VAULT_SOURCE 或 mac")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_init = sub.add_parser("init", help="创建 wx_* 表（幂等）")

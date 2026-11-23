@@ -1,5 +1,5 @@
 
-from wechat_archive.model import (
+from wechat_vault.model import (
     Message,
     conv_key,
     extract_app_text,

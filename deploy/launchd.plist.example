@@ -4,20 +4,20 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.makewheels.wechat-archive</string>
+  <string>com.makewheels.wechat-vault</string>
   <key>ProgramArguments</key>
   <array>
     <string>/bin/zsh</string>
     <string>-lc</string>
-    <string>cd /Users/mint/workspace/tools/wechat-archive &amp;&amp; infisical run --env=dev --path=/wechat-archive -- uv run wechat-archive sync --source mac</string>
+    <string>cd /Users/mint/workspace/tools/wechat-vault &amp;&amp; infisical run --env=dev --path=/wechat-vault -- uv run wechat-vault sync --source mac</string>
   </array>
   <key>StartInterval</key>
   <integer>900</integer>
   <key>RunAtLoad</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>/Users/mint/Library/Logs/wechat-archive/out.log</string>
+  <string>/Users/mint/Library/Logs/wechat-vault/out.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/mint/Library/Logs/wechat-archive/err.log</string>
+  <string>/Users/mint/Library/Logs/wechat-vault/err.log</string>
 </dict>
 </plist>

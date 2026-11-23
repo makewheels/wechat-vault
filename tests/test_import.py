@@ -2,10 +2,10 @@ import hashlib
 import json
 from pathlib import Path
 
-from wechat_archive.config import Config
-from wechat_archive.import_staging import import_staging
-from wechat_archive.model import conv_key
-from wechat_archive.sources.staging import StagingPackage
+from wechat_vault.config import Config
+from wechat_vault.import_staging import import_staging
+from wechat_vault.model import conv_key
+from wechat_vault.sources.staging import StagingPackage
 
 
 class FakeStore:
@@ -57,8 +57,8 @@ class FakeOSS:
 
 CONFIG = Config(
     endpoint="https://example.ots.aliyuncs.com",
-    instance="wechat-archive",
-    bucket="wechat-archive",
+    instance="wechat-vault",
+    bucket="wechat-vault",
     oss_endpoint="https://oss-cn-beijing.aliyuncs.com",
     region="cn-beijing",
     ak_id="x",

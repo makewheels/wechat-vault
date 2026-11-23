@@ -1,4 +1,4 @@
-# 微信聊天归档（wechat-archive）设计
+# 微信聊天归档（wechat-vault）设计
 
 > 目标：把 Mac 和 Windows 两台机器上的微信聊天记录，去重后归档到阿里云 Tablestore（消息）+ OSS（媒体/原始文件），可增量、可校验、可离线检索。
 >
@@ -9,8 +9,8 @@
 - **能做**。不自己重新实现微信数据库解密：WeFlow 已经在做“解密 + 解析 + 暴露 API”，我们把它当作**数据源适配器**。以后 WeFlow 不可用，再换 DirectDB 适配器。
 - **不把对象存储当数据库**：OSS 存媒体和原始导出（二进制/JSONL），Tablestore 存会话、消息、同步状态；本地 SQLite 只做检索副本。
 - **双端去重**：消息用 `serverId` 做全局身份，媒体用 SHA-256 内容寻址；同一账号的两台机器最终合并成一份，不同账号按 `account_id` 隔离。
-- **新建私有仓库** `makewheels/wechat-archive`，复用 `wechat-analyzer` 的 WeFlow 客户端代码；不复用 `weixin-chat-log`（老 Android 库结构，见 2.3）。
-- **新建 Tablestore 实例** `wechat-archive`（已确认）；全量会话（含 431 个公众号）都存，媒体全量，视频解密后再入 OSS。
+- **公开仓库** `makewheels/wechat-vault`（MIT），复用 `wechat-analyzer` 的 WeFlow 客户端代码；不复用 `weixin-chat-log`（老 Android 库结构，见 2.3）。
+- **新建 Tablestore 实例** `wechat-vault`（已确认）；全量会话（含 431 个公众号）都存，媒体全量，视频解密后再入 OSS。
 - **成本量级**：Tablestore 每月 3～6 元，OSS 43GB 约 5～7 元/月，合计 **10～12 元/月**；首月含一次性写入约 12～15 元。
 
 ## 1. 关键决策（ADR）
@@ -19,7 +19,7 @@
 |---|---|---|
 | D1 | WeFlow 作为唯一数据源，先不自己读微信 DB | 4.x 的 SQLCipher/密钥/媒体解密都由 WeFlow 处理；自研维护成本高、易被微信升级打断 |
 | D2 | 每台机器本地跑 ingester，不把 WeFlow API 暴露到局域网 | API 只绑 `127.0.0.1`；旧方案 `netsh portproxy` 会把带 token 的接口暴露给整个 LAN |
-| D3 | 新建 `wechat-archive` 私有仓库 | 归档是“写入服务”，与 chat-review（分析）、wechat-copilot（实时助手）、wechat-analyzer（导出骨架）职责不同 |
+| D3 | 新建 `wechat-vault` 私有仓库 | 归档是“写入服务”，与 chat-review（分析）、wechat-copilot（实时助手）、wechat-analyzer（导出骨架）职责不同 |
 | D4 | 消息主键含 `msg_uid`，`sort_seq` 用来源 `sortSeq` | 双端同一条消息落到同一行；按会话时间范围扫描仍然高效 |
 | D5 | 媒体按 SHA-256 内容寻址 | 同一张图在群里/私聊/两台机器上只存一份，天然去重 |
 | D6 | 追加式归档，先写先得 | 备份语义：撤回/删除不应让归档丢原文；冲突单独记录，不覆盖 |
@@ -86,7 +86,7 @@ v1 实现：`WeFlowSource(dir/API)`、`ExportZipSource(path)`。未来可选 `Di
 
 ## 4. 数据模型（Tablestore）
 
-实例：**新建 `wechat-archive`**（cn-beijing，CU 模式，容量型/HYBRID，0 预留 CU，已确认）。创建实例本身不收费，按存储、读写 CU、外网下行计费。表名统一 `wx_` 前缀。
+实例：**新建 `wechat-vault`**（cn-beijing，CU 模式，容量型/HYBRID，0 预留 CU，已确认）。创建实例本身不收费，按存储、读写 CU、外网下行计费。表名统一 `wx_` 前缀。
 
 ### 4.1 表
 
@@ -160,7 +160,7 @@ wx_conflicts
 
 ### 5.1 Bucket
 
-新建私有 bucket `wechat-archive`（cn-beijing）：
+新建私有 bucket `wechat-vault`（cn-beijing）：
 
 - ACL private，开 SSE-OSS（AES256），不开公共读；不开版本控制（key 内容寻址、不可变）。
 - 生命周期：30 天后转 IA，180 天后可转 Archive（按需；聊天图片可能常看，先 IA 即可）。
@@ -214,10 +214,10 @@ exports/<source>/<yyyy-mm-dd>/manifest.jsonl.gz
 ### 6.3 校验
 
 ```bash
-wechat-archive verify --counts        # 每会话行数 / 首末时间
-wechat-archive verify --dup-msg-uid   # 同一 msg_uid 多行（跨端 sortSeq 不一致）
-wechat-archive verify --media         # pending/failed/missing 统计
-wechat-archive sample --conv <id> --n 20
+wechat-vault verify --counts        # 每会话行数 / 首末时间
+wechat-vault verify --dup-msg-uid   # 同一 msg_uid 多行（跨端 sortSeq 不一致）
+wechat-vault verify --media         # pending/failed/missing 统计
+wechat-vault sample --conv <id> --n 20
 ```
 
 - 重复 `msg_uid`：保留最早 `ingested_at`，其余标 `dup_of`（不物理删除，留审计）；或人工合并。
@@ -243,11 +243,11 @@ wechat-archive sample --conv <id> --n 20
 
 ## 8. 权限、密钥、合规
 
-- **RAM 用户** `wechat-archive`：
-  - Tablestore：`GetRow/GetRange/PutRow/UpdateRow/BatchWrite/BatchGet`，资源 `acs:ots:*:*:instance/wechat-archive/table/wx_*`。
-  - OSS：`PutObject/GetObject/HeadObject/ListObjects`，资源 `acs:oss:*:*:wechat-archive/*`。
+- **RAM 用户** `wechat-vault`：
+  - Tablestore：`GetRow/GetRange/PutRow/UpdateRow/BatchWrite/BatchGet`，资源 `acs:ots:*:*:instance/wechat-vault/table/wx_*`。
+  - OSS：`PutObject/GetObject/HeadObject/ListObjects`，资源 `acs:oss:*:*:wechat-vault/*`。
   - 不给 `DeleteRow`、不给删 bucket；需要清理时用管理员临时授权。
-- **Infisical**：新路径 `tools/dev /wechat-archive`，键 `TABLESTORE_ENDPOINT/INSTANCE/ACCESS_KEY_ID/ACCESS_KEY_SECRET`、`OSS_*`；WeFlow token 复用 `platform-accounts/dev /weflow`，不复制。
+- **Infisical**：新路径 `tools/dev /wechat-vault`，键 `TABLESTORE_ENDPOINT/INSTANCE/ACCESS_KEY_ID/ACCESS_KEY_SECRET`、`OSS_*`；WeFlow token 复用 `platform-accounts/dev /weflow`，不复制。
 - **本机**：WeFlow API 只绑 `127.0.0.1`；ingester 在本机跑。不要 `netsh portproxy` 到 LAN；跨机只走 SSH 隧道。
 - **仓库**：数据、导出、SQLite、日志一律 gitignore；测试用合成 fixture，绝不用真实聊天。
 - **合规**：解密本地微信库通常违反微信用户协议；只读、自用、不分发。媒体是他人隐私，私有 bucket + 不公开链接；不做自动回复/自动发送。
@@ -276,14 +276,14 @@ wechat-archive sample --conv <id> --n 20
 
 ## 10. 仓库与代码结构
 
-新仓库 `makewheels/wechat-archive`（private）：
+新仓库 `makewheels/wechat-vault`（private）：
 
 ```text
-wechat-archive/
+wechat-vault/
 ├── DESIGN.md
 ├── README.md
 ├── pyproject.toml
-├── src/wechat_archive/
+├── src/wechat_vault/
 │   ├── cli.py            # init/import-zips/sync/media/verify/export-sqlite
 │   ├── config.py         # 非敏感配置 + env
 │   ├── model.py          # Message/Conversation 归一化、msg_uid、kind、清洗
@@ -308,7 +308,7 @@ wechat-archive/
 | 阶段 | 内容 | 验收 |
 |---|---|---|
 | P0 | 本设计确认；开私有仓库 | 决策表签字 |
-| P1 | 新建 `wechat-archive` 实例、bucket、RAM、Infisical；`init` 建表 | 空表可读写，权限最小化验证 |
+| P1 | 新建 `wechat-vault` 实例、bucket、RAM、Infisical；`init` 建表 | 空表可读写，权限最小化验证 |
 | P2 | 导入 54 个 zip；Mac 全量（含公众号） | 85,281 条对得上；重跑不增行 |
 | P3 | 媒体管线（含视频解密）；抽样 100；全量分批 | 同 hash 只 1 个对象；ffprobe 可播；失败可重试 |
 | P4 | Windows 交接（见 HANDOFF-WINDOWS.md）；跨端去重 | 同 `msg_uid` 只 1 行 |
@@ -321,8 +321,8 @@ wechat-archive/
 
 1. Mac / Windows 是**同一个微信号** → 合并去重。
 2. Windows 也跑 WeFlow，API 与 Mac 相同。
-3. 媒体**全量**（含视频），视频解密后入 OSS；新建 bucket `wechat-archive`。
-4. **新建** Tablestore 实例 `wechat-archive`。
+3. 媒体**全量**（含视频），视频解密后入 OSS；新建 bucket `wechat-vault`。
+4. **新建** Tablestore 实例 `wechat-vault`。
 5. 公众号 431 个也存，能存的都存。
 
 待办/风险：

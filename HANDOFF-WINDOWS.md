@@ -2,7 +2,7 @@
 
 > 读者：在 Windows 机器上工作的 coding agent。
 > 任务：把 Windows 微信（同一个微信号）的聊天记录和媒体，按本文件定义的**暂存包契约**导出，可选上传到阿里云 OSS；**不要写 Tablestore**，最终入库由 Mac 侧完成。
-> 先读同目录的 [DESIGN.md](DESIGN.md)。仓库：`makewheels/wechat-archive`（private）。
+> 先读同目录的 [DESIGN.md](DESIGN.md)。仓库：`makewheels/wechat-vault`（public，MIT）。
 
 ## 0. 一句话
 
@@ -300,24 +300,24 @@ for s in sessions:
 
 Mac 侧会提供：
 
-- bucket：`wechat-archive`，region `cn-beijing`，endpoint `oss-cn-beijing.aliyuncs.com`。
+- bucket：`wechat-vault`，region `cn-beijing`，endpoint `oss-cn-beijing.aliyuncs.com`。
 - 只写 RAM 凭据：只能 `PutObject` 到 `media/sha256/*` 和 `staging/win/*`；不能读、不能删、不能列出整个 bucket。
 - 期望的 `run_id`。
 
 上传顺序：
 
-1. 先传媒体到最终内容寻址前缀：`oss://wechat-archive/media/sha256/<sha>.<ext>`。
+1. 先传媒体到最终内容寻址前缀：`oss://wechat-vault/media/sha256/<sha>.<ext>`。
    - 内容寻址，重复上传同一个 key 无副作用；已存在可跳过（HEAD/stat）。
 2. 再传 `messages/`、`sessions.jsonl`、`contacts.jsonl`、`errors.jsonl`。
-3. **最后**传 `manifest.json` 和 `state.json` 到 `oss://wechat-archive/staging/win/<run_id>/`；manifest 是“提交标记”，Mac 侧看到它才开始导入。
+3. **最后**传 `manifest.json` 和 `state.json` 到 `oss://wechat-vault/staging/win/<run_id>/`；manifest 是“提交标记”，Mac 侧看到它才开始导入。
 
 用 `ossutil`（Windows 版）示例：
 
 ```powershell
-ossutil cp -r .\media\ oss://wechat-archive/media/sha256/ --update
-ossutil cp -r .\messages oss://wechat-archive/staging/win/<run_id>/messages/
-ossutil cp .\sessions.jsonl oss://wechat-archive/staging/win/<run_id>/
-ossutil cp .\manifest.json oss://wechat-archive/staging/win/<run_id>/
+ossutil cp -r .\media\ oss://wechat-vault/media/sha256/ --update
+ossutil cp -r .\messages oss://wechat-vault/staging/win/<run_id>/messages/
+ossutil cp .\sessions.jsonl oss://wechat-vault/staging/win/<run_id>/
+ossutil cp .\manifest.json oss://wechat-vault/staging/win/<run_id>/
 ```
 
 （`--update` 跳过已存在的同名对象；媒体 key 不可变，安全。）
@@ -364,7 +364,7 @@ messages: 1234567
 media: 12345 files / 43.0 GB
 media_verified: 12000 / unverified 300 / missing 45 / encrypted 0
 errors: 12
-staging: oss://wechat-archive/staging/win/20261122T2300-win/
+staging: oss://wechat-vault/staging/win/20261122T2300-win/
 duration: 3h20m
 notes: ...
 ```

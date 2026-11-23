@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from wechat_archive.model import conv_key
-from wechat_archive.sources.staging import StagingError, StagingPackage
+from wechat_vault.model import conv_key
+from wechat_vault.sources.staging import StagingError, StagingPackage
 
 
 def write_package(root: Path, *, missing_sessions: bool = False):

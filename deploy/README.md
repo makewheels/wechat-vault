@@ -5,9 +5,9 @@
 `launchd.plist.example` 是模板：
 
 1. 确认 `uv` 与 `infisical` 的绝对路径（`which uv` / `which infisical`），必要时改模板。
-2. 建日志目录：`mkdir -p ~/Library/Logs/wechat-archive`。
-3. 复制到 `~/Library/LaunchAgents/com.makewheels.wechat-archive.plist`。
-4. 加载：`launchctl load ~/Library/LaunchAgents/com.makewheels.wechat-archive.plist`。
+2. 建日志目录：`mkdir -p ~/Library/Logs/wechat-vault`。
+3. 复制到 `~/Library/LaunchAgents/com.makewheels.wechat-vault.plist`。
+4. 加载：`launchctl load ~/Library/LaunchAgents/com.makewheels.wechat-vault.plist`。
 
 每 15 分钟跑一次增量；WeFlow 没开时 `sync` 会报错退出，launchd 下次再试。
 
