@@ -20,6 +20,22 @@ TABLE_SCHEMAS: dict[str, list[tuple[str, str]]] = {
 }
 
 
+def _use_env_proxy(connection: Any, endpoint: str) -> None:
+    """The Tablestore SDK talks to urllib3 directly and ignores HTTPS_PROXY/NO_PROXY; honour them."""
+    from urllib.parse import urlsplit
+    from urllib.request import getproxies, proxy_bypass_environment
+
+    from urllib3 import ProxyManager
+
+    host = urlsplit(endpoint).hostname or ""
+    proxy = getproxies().get("https")
+    if not proxy or proxy_bypass_environment(host):
+        return
+    kwargs = dict(connection.pool.connection_pool_kw)
+    kwargs["maxsize"] = max(int(kwargs.get("maxsize") or 1), 32)  # concurrent imports share this pool
+    connection.pool = ProxyManager(proxy, num_pools=connection.NUM_POOLS, **kwargs)
+
+
 class TableStore:
     def __init__(self, config: Config):
         from tablestore import OTSClient
@@ -31,6 +47,7 @@ class TableStore:
             config.ak_secret,
             config.instance,
         )
+        _use_env_proxy(self.client.connection, config.endpoint)
 
     # ---- schema ----
 

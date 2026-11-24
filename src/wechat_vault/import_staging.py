@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import defaultdict, deque
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 
 from .config import Config
 from .media import mime_for, sha256_file, validate
@@ -22,6 +23,7 @@ def import_staging(
     limit: int | None = None,
     no_media: bool = False,
     dry_run: bool = False,
+    workers: int = 1,
     log: Callable[[str], None] = print,
 ) -> dict[str, int]:
     manifest = package.manifest
@@ -55,6 +57,21 @@ def import_staging(
         "errors": 0,
     }
 
+    workers = max(workers, 1)
+    pool = ThreadPoolExecutor(max_workers=workers) if not dry_run else None
+    pending: deque = deque()
+
+    def drain(keep: int) -> None:
+        while len(pending) > max(keep, 0):
+            done_message, future = pending.popleft()
+            try:
+                inserted = future.result()
+            except Exception as exc:  # keep going; one bad row must not abort a 1M-row import
+                stats["errors"] += 1
+                log(f"[import] message failed {done_message.conv_id} {done_message.msg_uid}: {exc}")
+                continue
+            stats["written" if inserted else "duplicates"] += 1
+
     for message in package.messages(limit=limit):
         conv_id = message.conv_id
         first_ts[conv_id] = min(first_ts.get(conv_id, message.create_time), message.create_time)
@@ -74,20 +91,17 @@ def import_staging(
             stats["errors"] += 1
             _add_flag(message, "media_failed")
             log(f"[media] failed {message.conv_id} {message.msg_uid}: {exc}")
-        try:
-            inserted = store.put_message(message)
-        except Exception as exc:  # keep going; one bad row must not abort a 1M-row import
-            stats["errors"] += 1
-            log(f"[import] message failed {conv_id} {message.msg_uid}: {exc}")
-            continue
-        if inserted:
-            stats["written"] += 1
-        else:
-            stats["duplicates"] += 1
         if message.media_ref and not message.media_sha256 and not no_media:
             store.put_media_task(message, message.media_ref)
-        if stats["messages"] % 1000 == 0:
+        pending.append((message, pool.submit(store.put_message, message)))
+        if len(pending) >= workers * 8:
+            drain(workers * 4)
+        if stats["messages"] % 5000 == 0:
             log(f"[import] {stats['messages']} messages, {stats['written']} written")
+
+    drain(0)
+    if pool is not None:
+        pool.shutdown()
 
     if not dry_run:
         assert store is not None

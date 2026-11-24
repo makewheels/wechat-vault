@@ -31,6 +31,7 @@ def _parser() -> argparse.ArgumentParser:
     p_import.add_argument("--limit", type=int, default=None, help="最多导入多少条消息（冒烟）")
     p_import.add_argument("--no-media", action="store_true", help="只导消息，不碰媒体")
     p_import.add_argument("--dry-run", action="store_true", help="只读，不写云")
+    p_import.add_argument("--workers", type=int, default=16, help="并发写 Tablestore 的线程数（默认 16）")
 
     p_sync = sub.add_parser("sync", help="从 WeFlow 增量/全量同步（Mac）")
     p_sync.add_argument("--full", action="store_true", help="忽略水位，全量")
@@ -65,6 +66,7 @@ def _run_import(package: StagingPackage, config: Config, args) -> int:
         limit=args.limit,
         no_media=args.no_media,
         dry_run=args.dry_run,
+        workers=args.workers,
     )
     print(f"[import] {stats}")
     return 0
