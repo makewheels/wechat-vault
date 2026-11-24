@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import threading
+import time
 from collections import defaultdict, deque
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from typing import TypeVar
 
 from .config import Config
 from .media import mime_for, sha256_file, validate
@@ -12,6 +15,9 @@ from .model import Conversation, Message
 from .sources.staging import StagingPackage
 from .store.oss import ObjectStore
 from .store.tablestore import TableStore
+
+T = TypeVar("T")
+MEDIA_UPLOAD_SLOTS = 8
 
 
 def import_staging(
@@ -60,6 +66,30 @@ def import_staging(
     workers = max(workers, 1)
     pool = ThreadPoolExecutor(max_workers=workers) if not dry_run else None
     pending: deque = deque()
+    stats_lock = threading.Lock()
+    upload_slots = threading.Semaphore(MEDIA_UPLOAD_SLOTS)
+
+    def process(message: Message) -> bool:
+        # Runs in a worker: hash/validate/upload media, then write the row. A row that already exists
+        # (an earlier text-only import) only gets its media fields filled in.
+        assert store is not None
+        local_stats: dict[str, int] = defaultdict(int)
+        try:
+            with upload_slots:
+                _prepare_media(message, package, oss, local_stats, no_media=no_media, log=log)
+        except Exception as exc:
+            local_stats["errors"] += 1
+            _add_flag(message, "media_failed")
+            log(f"[media] failed {message.conv_id} {message.msg_uid}: {exc}")
+        with stats_lock:
+            for name, value in local_stats.items():
+                stats[name] += value
+        if message.media_ref and not message.media_sha256 and not no_media:
+            store.put_media_task(message, message.media_ref)
+        inserted = store.put_message(message)
+        if not inserted and message.media_state == "done":
+            store.update_message_media(message, _media_fields(message))
+        return inserted
 
     def drain(keep: int) -> None:
         while len(pending) > max(keep, 0):
@@ -82,18 +112,9 @@ def import_staging(
 
         if dry_run:
             continue
-        assert store is not None
         if not no_media:
             assert oss is not None
-        try:
-            _prepare_media(message, package, oss, stats, no_media=no_media, log=log)
-        except Exception as exc:
-            stats["errors"] += 1
-            _add_flag(message, "media_failed")
-            log(f"[media] failed {message.conv_id} {message.msg_uid}: {exc}")
-        if message.media_ref and not message.media_sha256 and not no_media:
-            store.put_media_task(message, message.media_ref)
-        pending.append((message, pool.submit(store.put_message, message)))
+        pending.append((message, pool.submit(process, message)))
         if len(pending) >= workers * 8:
             drain(workers * 4)
         if stats["messages"] % 5000 == 0:
@@ -171,9 +192,9 @@ def _prepare_media(
     key = oss.key(sha, ext)
     message.media_key = key
     message.media_mime = message.media_mime or mime_for(ext)
-    if oss.exists(key):
+    if oss_exists(oss, key):
         message.media_state = "done"
-        size = oss.size(key)
+        size = _retry(lambda: oss.size(key))
         if size:
             message.media_size = size
         stats["media_present"] += 1
@@ -183,7 +204,7 @@ def _prepare_media(
         _add_flag(message, "media_missing")
         stats["media_missing"] += 1
         return
-    oss.put_file(local, key, mime_for(ext), sha)
+    _retry(lambda: oss.put_file(local, key, mime_for(ext), sha))
     message.media_sha256 = sha
     message.media_key = key
     message.media_size = local.stat().st_size
@@ -191,6 +212,35 @@ def _prepare_media(
     for flag in flags:
         _add_flag(message, flag)
     stats["media_uploaded"] += 1
+
+
+def oss_exists(oss: ObjectStore, key: str) -> bool:
+    return _retry(lambda: oss.exists(key))
+
+
+def _retry(call: Callable[[], T], attempts: int = 6) -> T:
+    # The proxy path to OSS drops connections under load; back off and try again.
+    for attempt in range(attempts):
+        try:
+            return call()
+        except Exception:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(min(2**attempt, 20))
+    raise AssertionError("unreachable")
+
+
+def _media_fields(message: Message) -> dict[str, object]:
+    return {
+        "media_ref": message.media_ref,
+        "media_sha256": message.media_sha256,
+        "media_key": message.media_key,
+        "media_ext": message.media_ext,
+        "media_size": message.media_size,
+        "media_mime": message.media_mime,
+        "media_state": message.media_state,
+        "flags": ",".join(message.flags),
+    }
 
 
 def _add_flag(message: Message, flag: str) -> None:

@@ -34,7 +34,7 @@ class ConvertTests(unittest.TestCase):
 
     def convert(self, talker, sender_id, content, client=None):
         client = client or make_client()
-        return client.convert(talker, self.names, 2, (1, 99, 1, 5000, sender_id, 1700000000, content, None))
+        return client.convert(talker, self.names, 2, (1, 99, 1, 5000, sender_id, 1700000000, content, None, None))
 
     def test_group_prefix_stripped_for_others_only(self):
         other = self.convert("1@chatroom", 7, "wxid_bob:\nhello")

@@ -9,8 +9,9 @@ WeFlow's config and is never printed. The package format, msg_uid rules and veri
 same as export_weflow.py, so `export_weflow.py --verify` and the Mac's `import-staging` accept it.
 
 The exporter refuses to run when a table does not have the columns it needs, so a WeChat update
-that changes the schema fails loudly instead of producing wrong data. Text only for now: media
-files are not exported.
+that changes the schema fails loudly instead of producing wrong data. Media (images, voice, video,
+files) is located and decoded read-only into a temporary folder under --out, ingested, and removed;
+use --no-media for text only. Emoji have no local file and are skipped.
 """
 from __future__ import annotations
 
@@ -18,6 +19,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import sqlite3
 import sys
 import threading
@@ -26,6 +28,7 @@ from pathlib import Path
 
 import export_weflow as ew
 import wcdb_snapshot as ws
+from snapshot_media import MediaLocator
 
 try:
     from compression import zstd as _zstd  # Python 3.14+
@@ -48,10 +51,10 @@ REQUIRED_COLUMNS = {
     "contact": {"username", "alias", "remark", "nick_name", "local_type"},
     "Name2Id": {"user_name"},
     "Msg": {"local_id", "server_id", "local_type", "sort_seq", "real_sender_id", "create_time", "status",
-            "message_content"},
+            "message_content", "packed_info_data"},
 }
 MESSAGE_SQL = ('select local_id, server_id, local_type, sort_seq, real_sender_id, create_time, '
-               'message_content, compress_content from "{table}"')
+               'message_content, compress_content, packed_info_data from "{table}"')
 
 
 def md5_hex(text):
@@ -91,6 +94,7 @@ class SnapshotClient:
         self.lock = threading.RLock()
         self.passphrase = passphrase
         self.decode_failures = 0
+        self.locator = None
         self.stats = {}
         self.session_con = self.open("session/session.db")
         self.contact_con = self.open("contact/contact.db")
@@ -195,7 +199,29 @@ class SnapshotClient:
         if start:
             rows = [m for m in rows if m["createTime"] >= start]
         page = rows[offset:offset + limit]
-        return {"messages": page, "hasMore": offset + len(page) < len(rows)}
+        result = {"messages": page, "hasMore": offset + len(page) < len(rows)}
+        if media and self.locator is not None:
+            page = [self.with_media(talker, m) for m in page]
+            result.update(messages=page, media={"exportPath": str(self.locator.workdir)})
+        return result
+
+    def with_media(self, talker, m):
+        base = m["localType"] & 0xFFFFFFFF
+        if base not in (3, 34, 43, 49):
+            return m
+        found = self.locator.resolve(talker, m)
+        if found is None:
+            return m
+        copy = dict(m, mediaPath=str(found.path), mediaFileName=found.name)
+        if found.fallback_ext:
+            copy["mediaFallbackExt"] = found.fallback_ext
+        if found.thumb_only:
+            copy["mediaThumbOnly"] = True
+        return copy
+
+    def enable_media(self, account_dir, workdir, image_aes=None, image_xor=None):
+        self.locator = MediaLocator(account_dir, self.root, self.passphrase, workdir, image_aes, image_xor)
+        return self.locator
 
     # -- conversion --------------------------------------------------------
 
@@ -217,7 +243,7 @@ class SnapshotClient:
             return rows
 
     def convert(self, talker, names, self_id, row):
-        local_id, server_id, local_type, sort_seq, sender_id, create_time, content, _compress = row
+        local_id, server_id, local_type, sort_seq, sender_id, create_time, content, _compress, packed = row
         try:
             raw = decode_content(content)
         except Exception:
@@ -236,19 +262,47 @@ class SnapshotClient:
             sender = sender_name or ("" if talker.endswith("@chatroom") else talker)
         return {"localId": local_id, "serverId": server_id, "localType": local_type, "sortSeq": sort_seq,
                 "createTime": create_time, "isSend": 1 if is_send else 0, "senderUsername": sender,
-                "content": text, "rawContent": raw}
+                "content": text, "rawContent": raw,
+                "packedInfo": bytes(packed) if isinstance(packed, (bytes, bytearray, memoryview)) else b""}
 
 
 class SnapshotExporter(ew.Exporter):
     def __init__(self, opts, client):
         super().__init__(opts, client)
-        self.notes_base = "direct read of the Windows WeChat 4.x databases (in-memory decrypt); text only"
+        media = client.locator is not None
+        self.notes_base = ("direct read of the Windows WeChat 4.x databases (in-memory decrypt); "
+                           + ("text and media (images, voice, video, files; no emoji)" if media else "text only"))
+
+    def wants_media(self, rec, m):
+        if self.client.locator is None:
+            return False
+        if rec["kind"] in ("image", "voice", "video"):
+            return True
+        return rec["kind"] == "app" and rec["local_type"] >> 32 == 6
+
+    def resolve_media(self, raw_path):
+        path = Path(raw_path)
+        return (path, None) if path.is_file() else (None, "missing")
+
+    def release_media(self, path):
+        self.client.locator.release(path)
+
+    def media_ref_for(self, m, raw_path):
+        return m.get("mediaFileName")
+
+    def attach_media(self, conv, rec, m):
+        super().attach_media(conv, rec, m)
+        if m.get("mediaThumbOnly") and rec.get("media_sha256"):
+            rec["flags"].append("media_thumbnail_only")
+            self.inc("media_thumbnail_only")
 
 
 def build_parser():
     parser = ew.build_parser()
     parser.description = "Export WeChat chats from the Windows databases into a staging package."
     parser.add_argument("--db-storage", help="<account folder>\\db_storage (default: from WeFlow's config)")
+    parser.add_argument("--source", default="win",
+                        help="source label stored in the manifest/sync state, e.g. mac-db when run on the Mac")
     parser.add_argument("--weflow-config", help="WeFlow-config.json holding decryptKey (default: %%APPDATA%%)")
     parser.add_argument("--check", action="store_true",
                         help="decrypt, verify the schema and print counts; write nothing")
@@ -269,6 +323,24 @@ def run_check(client):
     return 0
 
 
+def load_image_keys(weflow_config=None):
+    """(aes_key bytes|None, xor_key int|None) from WECHAT_IMAGE_AES_KEY/XOR_KEY or WeFlow's config."""
+    cfg = {}
+    path = Path(weflow_config) if weflow_config else Path(os.environ.get("APPDATA", "")) / "weflow" / "WeFlow-config.json"
+    try:
+        cfg = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        pass
+    aes = os.environ.get("WECHAT_IMAGE_AES_KEY") or cfg.get("imageAesKey") or ""
+    xor = os.environ.get("WECHAT_IMAGE_XOR_KEY") or cfg.get("imageXorKey")
+    aes_key = aes.encode("ascii", "ignore") if isinstance(aes, str) and len(aes) == 16 else None
+    try:
+        xor_key = int(xor, 0) if isinstance(xor, str) else (int(xor) if xor is not None else None)
+    except ValueError:
+        xor_key = None
+    return aes_key, xor_key if xor_key is None or 0 <= xor_key < 256 else None
+
+
 def main(argv=None):
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -278,16 +350,25 @@ def main(argv=None):
         if opts.verify:
             return ew.main(["--out", opts.out, "--verify", "--ffprobe", opts.ffprobe])
         passphrase = ws.load_passphrase(opts.weflow_config)
-        client = SnapshotClient(ws.find_db_storage(opts.db_storage), passphrase, os.environ.get("WECHAT_MY_WXID"))
+        db_storage = ws.find_db_storage(opts.db_storage)
+        client = SnapshotClient(db_storage, passphrase, os.environ.get("WECHAT_MY_WXID"))
         if opts.check:
             return run_check(client)
-        opts.no_media = True
+        workdir = Path(opts.out) / ".media-work"
+        if not opts.no_media:
+            aes_key, xor_key = load_image_keys(opts.weflow_config)
+            client.enable_media(db_storage.parent, workdir, aes_key, xor_key)
         opts.media_only = False
         opts.workers = max(1, min(4, opts.workers))
         opts.page_size = max(1, opts.page_size)
         opts.weflow_version = SNAPSHOT_VERSION
         os.environ["WECHAT_MY_WXID"] = client.my_wxid
-        code = SnapshotExporter(opts, client).run()
+        try:
+            code = SnapshotExporter(opts, client).run()
+        finally:
+            if client.locator is not None:
+                shutil.rmtree(workdir, ignore_errors=True)
+                print("media:", dict(client.locator.counts))
         if client.decode_failures:
             print(f"warning: {client.decode_failures} messages could not be decoded (exported with empty text)")
             code = code or 3

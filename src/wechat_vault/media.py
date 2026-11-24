@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import mimetypes
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -73,7 +74,7 @@ def guess_ext(name: str | None) -> str | None:
     if not name:
         return None
     suffix = Path(name).suffix.lower().lstrip(".")
-    return suffix or None
+    return suffix if re.fullmatch(r"[a-z0-9]{1,8}", suffix) else None
 
 
 def mime_for(ext: str | None) -> str:
@@ -115,7 +116,8 @@ def validate(path: str | Path, kind: str, name: str | None = None) -> tuple[bool
     path = Path(path)
     flags: list[str] = []
     magic = sniff_ext(path)
-    ext = magic or guess_ext(name)
+    # Documents are often zip/ole containers (docx, xlsx...); the file name says more than the magic does.
+    ext = (guess_ext(name) or magic) if kind == "app" else (magic or guess_ext(name))
     if kind == "image" and magic not in _IMAGE_EXTS:
         return False, ext, ["media_encrypted"]
     elif kind == "video":

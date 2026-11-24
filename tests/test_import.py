@@ -141,6 +141,18 @@ def test_import_no_media(tmp_path):
     assert not oss.files
 
 
+def test_import_existing_row_gets_media_fields(tmp_path):
+    sha = build_package(tmp_path, media_bytes=b"\xff\xd8\xff\xe0" + b"0" * 100)
+    store, oss = FakeStore(), FakeOSS()
+    store.put_message = lambda message: (store.messages.append(message), False)[1]
+    stats = import_staging(StagingPackage(tmp_path), store, oss, config=CONFIG)
+    assert stats["duplicates"] == 2
+    assert [uid for uid, _ in store.media_updates] == ["s2"]
+    fields = store.media_updates[0][1]
+    assert fields["media_state"] == "done"
+    assert fields["media_key"] == f"media/sha256/{sha}.jpg"
+
+
 def test_import_dry_run(tmp_path):
     build_package(tmp_path, media_bytes=b"\xff\xd8\xff\xe0" + b"0" * 100)
     store, oss = FakeStore(), FakeOSS()

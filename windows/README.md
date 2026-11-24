@@ -6,9 +6,9 @@ WeFlow 内置到期（`wcdb_init -1005`，无新版），改为直接读微信 4
 
 ```powershell
 python windows\export_snapshot.py --out W:\wechat-export-win --check        # 只读：解密、校验表结构、打印计数
-python windows\export_snapshot.py --out W:\wechat-export-win --full          # 全量（目前只导文本，无媒体）
+python windows\export_snapshot.py --out W:\wechat-export-win --full          # 全量，含媒体；--no-media 只导文本
 python windows\export_snapshot.py --out W:\wechat-export-win --verify
-wechat-vault import-staging --dir W:\wechat-export-win --workers 16          # 入 Tablestore，幂等
+wechat-vault import-staging --dir W:\wechat-export-win --workers 16          # 入 Tablestore + OSS，幂等
 ```
 
 - 口令：环境变量 `WECHAT_DB_KEY`（64 位 hex），或 WeFlow 配置里的 `decryptKey`。口令不会被打印。
@@ -16,6 +16,15 @@ wechat-vault import-staging --dir W:\wechat-export-win --workers 16          # �
 - 微信账号推断：目录名去掉 `_xxxx` 后缀，并用 `Name2Id` 校验；不对时设 `WECHAT_MY_WXID`。
 - 分库的同一会话（message_0/1/2 与 biz_message_0）会合并，排序为 `(create_time, sort_seq, local_id)`。
 - 跨设备去重靠 `(conv_id, sort_seq, msg_uid)`；Mac 与 Windows 的 `sort_seq` 不一致时会产生重复，入库后用 `wechat-vault verify --dup-msg-uid` 检查。
+- `--source`（默认 `win`）写进 manifest，决定同步状态的 `source_id`；在 Mac 上跑设 `mac-db`。Mac 步骤见上级 `HANDOFF-MAC.md`。
+
+媒体（`snapshot_media.py` + `wechat_media.py`，只读、不改微信目录）：
+
+- 图片：`msg\attach\<md5(会话)>\<月>\Img\<md5>[_h|_W|_t|_t_W].dat`，md5 取自消息行的 `packed_info_data`；优先高清（`_h`），只有缩略图时打 `media_thumbnail_only`。V2 格式用 AES 密钥 + XOR 密钥解（`WECHAT_IMAGE_AES_KEY`/`WECHAT_IMAGE_XOR_KEY` 或 WeFlow 配置的 `imageAesKey`/`imageXorKey`），旧格式单字节 XOR；wxgf（HEVC）用 `ffmpeg` 转成 JPEG（有损重编码，需要 `ffmpeg` 在 PATH）。
+- 视频：`msg\video\<月>\<md5>.mp4`；文件：`msg\file\<月>\<标题>`，有 XML md5 时校验内容；语音：`message\media_*.db` 的 `VoiceInfo`（SILK）。
+- 解出的图片/语音先放 `<out>\.media-work`，入包后即删；本地没有的（未下载）标 `media_missing`，不是错误。
+- 表情（emoji）只有 CDN 链接、没有本地文件，不导出。
+- 入库时已存在的行只补媒体字段（`media_*`、`flags`）；OSS 并发上传限 8、失败自动退避重试（出口代理不稳）。
 
 测试：`cd windows; python -m unittest`。
 

@@ -14,6 +14,7 @@ import hashlib
 import html
 import http.client
 import json
+import mimetypes
 import os
 import re
 import shutil
@@ -68,7 +69,7 @@ CDATA_RE = re.compile(r"<!\[CDATA\[(.*?)\]\]>", re.DOTALL)
 TAG_RE = re.compile(r"<[^>]+>")
 SURROGATE_RE = re.compile("[\ud800-\udfff]")
 SHA_NAME_RE = re.compile(r"^([0-9a-f]{64})\.([a-z0-9]+)$")
-
+SNIFFABLE_EXTS = frozenset({"jpg", "png", "gif", "webp", "wav", "mp4", "pdf", "zip", "silk", "bmp"})
 
 class ExportError(Exception):
     """Fatal problem that stops the whole run."""
@@ -313,8 +314,11 @@ def probe_video(ffprobe, path):
         return False
 
 
-def ingest_media(src, media_dir, kind, ffprobe, tag):
-    """Copy a plaintext media file into media/<sha256>.<ext>; never stores unverified or encrypted bytes."""
+def ingest_media(src, media_dir, kind, ffprobe, tag, fallback_ext=None):
+    """Copy a plaintext media file into media/<sha256>.<ext>; never stores unverified or encrypted bytes.
+
+    fallback_ext is for user attachments (documents, archives) whose type cannot be sniffed.
+    """
     size = src.stat().st_size
     if size == 0:
         return MediaOutcome("empty", size=0)
@@ -325,9 +329,15 @@ def ingest_media(src, media_dir, kind, ffprobe, tag):
         with open(src, "rb") as source:
             first = source.read(COPY_CHUNK)
             sig = sniff(first[:32])
-            if sig is None:
+            if sig is None and fallback_ext:
+                ext = fallback_ext
+                mime = mimetypes.guess_type(f"x.{ext}")[0] or "application/octet-stream"
+            elif sig is None:
                 return MediaOutcome("encrypted", size=size)
-            ext, mime = sig
+            elif fallback_ext and sig[0] == "zip" and fallback_ext != "zip":
+                ext, mime = fallback_ext, mimetypes.guess_type(f"x.{fallback_ext}")[0] or sig[1]
+            else:
+                ext, mime = sig
             digest = hashlib.sha256()
             total = 0
             with open(tmp, "wb") as target:
@@ -663,6 +673,15 @@ class Exporter:
         name = m.get("mediaFileName")
         return str(name) if name else None
 
+    def wants_media(self, rec, m):
+        return rec["kind"] in MEDIA_KINDS
+
+    def resolve_media(self, raw_path):
+        return resolve_media_path(raw_path, self.media_root)
+
+    def release_media(self, path):
+        """Called after a media file has been ingested (or failed); subclasses may delete temp files."""
+
     def attach_media(self, conv, rec, m):
         flags = rec["flags"]
         raw_path = m.get("mediaPath") or m.get("mediaLocalPath")
@@ -671,7 +690,7 @@ class Exporter:
             flags.append("media_missing")
             self.inc("media_missing")
             return
-        path, problem = resolve_media_path(str(raw_path), self.media_root)
+        path, problem = self.resolve_media(str(raw_path))
         if path is None:
             flags.append("media_missing")
             self.inc("media_missing")
@@ -679,12 +698,15 @@ class Exporter:
                 self.record_error(conv, "media", None, "media path is outside WeFlow's export folder", False)
             return
         try:
-            outcome = ingest_media(path, self.media_dir, rec["kind"], self.ffprobe, self.tmp_tag())
+            outcome = ingest_media(path, self.media_dir, rec["kind"], self.ffprobe, self.tmp_tag(),
+                                   m.get("mediaFallbackExt"))
         except OSError as err:
             flags.append("media_missing")
             self.inc("media_missing")
             self.record_error(conv, "media", None, f"{type(err).__name__} errno={err.errno}", True)
             return
+        finally:
+            self.release_media(path)
         if outcome.status in ("empty", "too_large"):
             flags.append("media_missing" if outcome.status == "empty" else "media_too_large")
             self.inc("media_missing" if outcome.status == "empty" else "media_too_large")
@@ -795,7 +817,7 @@ class Exporter:
                         if rec["create_time"] < threshold or rec["msg_uid"] in seen:
                             continue
                         seen.add(rec["msg_uid"])
-                        if want_media and rec["kind"] in MEDIA_KINDS:
+                        if want_media and self.wants_media(rec, m):
                             self.attach_media(conv, rec, m)
                         emit(out, rec)
                     offset += len(msgs)
@@ -891,7 +913,7 @@ class Exporter:
             notes += f"; smoke run: latest {opts.limit} messages per conversation"
         manifest = {
             "schema_version": SCHEMA_VERSION,
-            "source": "win",
+            "source": getattr(opts, "source", None) or "win",
             "run_id": run_id,
             "account_id": self.account_id,
             "my_wxid_hash": self.my_wxid_hash,
@@ -943,7 +965,8 @@ class Exporter:
         selected = self.select(all_sessions)
         self.resolve_account(all_sessions)
         self.log(f"account_id: {self.account_id}")
-        run_id = self.opts.run_id or datetime.now(CST).strftime("%Y%m%dT%H%M") + "-win"
+        run_id = self.opts.run_id or (datetime.now(CST).strftime("%Y%m%dT%H%M") + "-"
+                                      + (getattr(self.opts, "source", None) or "win"))
         todo = [s for s in selected if self.needs_export(s)]
         self.log(f"conversations to export: {len(todo)} (skipped {len(selected) - len(todo)})")
         with concurrent.futures.ThreadPoolExecutor(max_workers=self.opts.workers) as pool:
@@ -1019,8 +1042,10 @@ def verify_package(out, ffprobe=None):
         if digest.hexdigest() != match.group(1):
             bad(f"media hash mismatch: {entry.name}")
         sig = sniff(head[:32])
-        if sig is None or sig[0] != match.group(2):
-            bad(f"media content does not look like .{match.group(2)}: {entry.name}")
+        ext = match.group(2)
+        sniffable = ext in SNIFFABLE_EXTS
+        if sniffable and (sig is None or sig[0] != ext):
+            bad(f"media content does not look like .{ext}: {entry.name}")
         if match.group(2) == "mp4" and ffprobe:
             summary["videos_checked"] += 1
             if probe_video(ffprobe, entry):
