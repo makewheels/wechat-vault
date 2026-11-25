@@ -1,6 +1,6 @@
 # 部署
 
-两台机器各自每天 12:30 跑一次增量同步：`python -m wechat_vault.incremental`。失败时发飞书群通知（见下）。
+两台机器每天各跑一次增量同步：Mac 12:30、Windows 13:30（错开，避免同时写云端）：`python -m wechat_vault.incremental`。失败时发飞书群通知（见下）。
 
 流程：取云端该来源（`win` / `mac`）的水位（`wx_sync_state` 的最大 `last_create_time`），回溯 7 天，
 直读本机数据库导出这段时间的消息和媒体，再幂等合并到 Tablestore / OSS。已存在的消息按 `(conv_id, msg_uid)` 跳过，
@@ -25,11 +25,11 @@
 
 - `run-windows.ps1`：从 Infisical 读取云端凭据和本机设备密钥（仅进当前进程环境变量），自动选可连通的代理（北京 → 中继），
   跑增量同步，日志在 `%LOCALAPPDATA%\wechat-vault\logs\incremental-YYYYMMDD.log`（保留 30 天）。多余参数原样传给 `incremental`。
-- `register-windows-task.ps1`：注册任务 `wechat-vault-incremental`，默认每天 12:30（`-At HH:mm` 可改），仅当前用户登录时运行
+- `register-windows-task.ps1`：注册任务 `wechat-vault-incremental`，默认每天 13:30（`-At HH:mm` 可改），仅当前用户登录时运行
   （Infisical CLI 登录按用户保存），错过的会在开机后补跑，上一次未结束则忽略新实例。
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File deploy\register-windows-task.ps1 [-At 12:30]
+powershell -ExecutionPolicy Bypass -File deploy\register-windows-task.ps1 [-At 13:30]
 Start-ScheduledTask wechat-vault-incremental     # 手动触发
 Unregister-ScheduledTask wechat-vault-incremental -Confirm:$false   # 卸载
 ```

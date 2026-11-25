@@ -1,6 +1,6 @@
 # Registers the daily incremental sync as a Task Scheduler job for the current user (runs while logged on:
 # the Infisical CLI login is per user; StartWhenAvailable runs a missed job once the machine is back).
-param([string] $At = '12:30', [string] $TaskName = 'wechat-vault-incremental')
+param([string] $At = '13:30', [string] $TaskName = 'wechat-vault-incremental')
 
 $script = Join-Path $PSScriptRoot 'run-windows.ps1'
 $action = New-ScheduledTaskAction -Execute 'conhost.exe' `
