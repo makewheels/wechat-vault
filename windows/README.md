@@ -1,5 +1,20 @@
 # Windows 导出器
 
+## 密钥隔离
+
+Infisical 项目 `tools`、环境 `dev`：按 `/wechat-vault/<微信ID>/<机器标识>` 存放密钥。
+当前账号 `wxid_vizj1s0qmxl922` 的 Windows 密钥位于
+`/wechat-vault/wxid_vizj1s0qmxl922/windows`，键名 `WECHAT_DB_KEY`。
+`windows` 暂为这台 Windows 的逻辑标识，尚未核实主机名。
+Mac 使用独立路径 `/wechat-vault/wxid_vizj1s0qmxl922/mac-mint-mac-mini`；禁止跨机器混用。
+云凭据仍在 `/wechat-vault`；密钥不再放在该公共路径。
+
+Windows 运行时先注入云凭据，再注入该机器密钥：
+
+```powershell
+infisical run --projectId=79c61872-d992-44c7-a5ae-d3e70e004e7f --env=dev --path=/wechat-vault -- infisical run --projectId=79c61872-d992-44c7-a5ae-d3e70e004e7f --env=dev --path=/wechat-vault/wxid_vizj1s0qmxl922/windows -- python windows/export_snapshot.py --out W:\wechat-export-win --check
+```
+
 ## 推荐：直读数据库（export_snapshot.py，不依赖 WeFlow）
 
 WeFlow 内置到期（`wcdb_init -1005`，无新版），改为直接读微信 4.x 加密库：`wcdb_snapshot.py` 在内存中解密（SQLCipher 4，合并 WAL，逐页 HMAC 校验），磁盘上不落明文。`export_snapshot.py` 复用下面 `export_weflow.py` 的整条管线，只把数据源换成数据库，产出同样的暂存包。

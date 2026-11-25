@@ -41,7 +41,7 @@ except ImportError:  # pragma: no cover
 ZSTD_MAGIC = b"\x28\xb5\x2f\xfd"
 SENDER_PREFIX_RE = re.compile(r"^([A-Za-z0-9_@.\-]{1,80}):\n")
 SNAPSHOT_VERSION = "wcdb-direct-1"
-CACHE_CONVERSATIONS = 3
+CACHE_CONVERSATIONS = 8
 
 REQUIRED_COLUMNS = {
     "SessionTable": {"username", "last_timestamp", "sort_timestamp"},

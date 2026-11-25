@@ -9,7 +9,9 @@
 3. 复制到 `~/Library/LaunchAgents/com.makewheels.wechat-vault.plist`。
 4. 加载：`launchctl load ~/Library/LaunchAgents/com.makewheels.wechat-vault.plist`。
 
-每 15 分钟跑一次增量；WeFlow 没开时 `sync` 会报错退出，launchd 下次再试。
+模板已改为按账号和设备从 Infisical 注入密钥，直接读取本机数据库，不依赖 WeFlow。
+当前直读命令每次做全量快照再幂等导入，模板间隔仍为 15 分钟；正式启用前应按数据量调整间隔。
+本次仅更新模板，未安装或启用定时任务。媒体使用主 README 中的独立命令。
 
 ## Windows
 

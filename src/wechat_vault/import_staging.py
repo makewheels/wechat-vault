@@ -37,9 +37,13 @@ def import_staging(
     sessions: dict[str, Conversation] = {}
     for conversation in package.sessions():
         sessions[conversation.conv_id] = conversation
-        if not dry_run:
-            assert store is not None
-            store.upsert_conversation(conversation)
+    if not dry_run:
+        assert store is not None
+        if hasattr(store, "upsert_conversations"):
+            store.upsert_conversations(list(sessions.values()))
+        else:
+            for conversation in sessions.values():
+                store.upsert_conversation(conversation)
 
     first_ts: dict[str, int] = {}
     last_ts: dict[str, int] = {}
@@ -63,16 +67,39 @@ def import_staging(
 
     def drain(keep: int) -> None:
         while len(pending) > max(keep, 0):
-            done_message, future = pending.popleft()
+            done_message, future, batch_size = pending.popleft()
             try:
                 inserted = future.result()
             except Exception as exc:  # keep going; one bad row must not abort a 1M-row import
-                stats["errors"] += 1
+                stats["errors"] += batch_size
                 log(f"[import] message failed {done_message.conv_id} {done_message.msg_uid}: {exc}")
                 continue
-            stats["written" if inserted else "duplicates"] += 1
+            if isinstance(inserted, list):
+                stats["written"] += sum(inserted)
+                stats["duplicates"] += len(inserted) - sum(inserted)
+            else:
+                stats["written" if inserted else "duplicates"] += 1
 
+    # Reuse the stored order key for a message already present on another device.
+    # Local sort_seq values are not a cross-device identity.
+    prefetched = not dry_run and hasattr(store, "message_identities")
+    stored_ids: dict[str, dict[str, tuple[int, str]]] = (
+        store.message_identities(account_id) if prefetched else {})
+    batch = []
+    variants = []
+    use_batches = hasattr(store, "put_messages")
     for message in package.messages(limit=limit):
+        if not dry_run:
+            if message.conv_id not in stored_ids and not prefetched:
+                stored_ids[message.conv_id] = {
+                    str(row["msg_uid"]): (int(row["sort_seq"]), str(row.get("content_hash") or ""))
+                    for row in store.iter_messages(message.conv_id, columns=["content_hash"])
+                }
+            identities = stored_ids.setdefault(message.conv_id, {})
+            already_known = message.msg_uid in identities
+            known = identities.setdefault(message.msg_uid, (message.sort_seq, message.content_hash))
+            message.sort_seq = known[0]
+
         conv_id = message.conv_id
         first_ts[conv_id] = min(first_ts.get(conv_id, message.create_time), message.create_time)
         last_ts[conv_id] = max(last_ts.get(conv_id, message.create_time), message.create_time)
@@ -83,6 +110,17 @@ def import_staging(
         if dry_run:
             continue
         assert store is not None
+        if no_media and already_known and known[1] == message.content_hash:
+            stats["duplicates"] += 1
+            continue
+        if no_media and already_known and hasattr(store, "put_message_variants"):
+            variants.append((message, known[1]))
+            if len(variants) >= 200:
+                pending.append((message, pool.submit(store.put_message_variants, variants), len(variants)))
+                variants = []
+            if len(pending) >= workers * 8:
+                drain(workers * 4)
+            continue
         if not no_media:
             assert oss is not None
         try:
@@ -93,29 +131,47 @@ def import_staging(
             log(f"[media] failed {message.conv_id} {message.msg_uid}: {exc}")
         if message.media_ref and not message.media_sha256 and not no_media:
             store.put_media_task(message, message.media_ref)
-        pending.append((message, pool.submit(store.put_message, message)))
+        if use_batches:
+            batch.append(message)
+            if len(batch) >= 200:
+                pending.append((message, pool.submit(store.put_messages, batch), len(batch)))
+                batch = []
+        else:
+            pending.append((message, pool.submit(store.put_message, message), 1))
         if len(pending) >= workers * 8:
             drain(workers * 4)
         if stats["messages"] % 5000 == 0:
             log(f"[import] {stats['messages']} messages, {stats['written']} written")
 
+    if batch:
+        pending.append((batch[-1], pool.submit(store.put_messages, batch), len(batch)))
+    if variants:
+        pending.append((variants[-1][0], pool.submit(store.put_message_variants, variants), len(variants)))
     drain(0)
     if pool is not None:
         pool.shutdown()
 
     if not dry_run:
         assert store is not None
+        records = []
         for conv_id, conversation in sessions.items():
             conversation.first_ts = first_ts.get(conv_id, conversation.first_ts)
             conversation.last_ts = last_ts.get(conv_id, conversation.last_ts)
-            store.upsert_conversation(conversation)
-            store.put_sync_state(
-                source_id=source,
-                conv_id=conv_id,
-                last_sort_seq=max_sort.get(conv_id, 0),
-                last_create_time=last_ts.get(conv_id, 0),
-                msgs_written=counts.get(conv_id, 0),
-            )
+            records.append({"conv_id": conv_id, "last_sort_seq": max_sort.get(conv_id, 0),
+                            "last_create_time": last_ts.get(conv_id, 0),
+                            "msgs_written": counts.get(conv_id, 0)})
+        if hasattr(store, "upsert_conversations"):
+            store.upsert_conversations(list(sessions.values()))
+        else:
+            for conversation in sessions.values():
+                store.upsert_conversation(conversation)
+        # Never advance watermarks over failed writes.
+        if not stats["errors"]:
+            if hasattr(store, "put_sync_states"):
+                store.put_sync_states(source, records)
+            else:
+                for record in records:
+                    store.put_sync_state(source_id=source, **record)
     return stats
 
 

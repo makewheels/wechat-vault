@@ -17,6 +17,9 @@ class FakeStore:
         self.sync_states = []
         self.media_updates = []
 
+    def iter_messages(self, conv_id, columns=None):
+        return (m.to_record() for m in self.messages if m.conv_id == conv_id)
+
     def put_account(self, *args, **kwargs):
         self.accounts.append((args, kwargs))
 
@@ -149,3 +152,93 @@ def test_import_dry_run(tmp_path):
     assert store.messages == []
     assert store.accounts == []
     assert not oss.files
+
+
+def test_cross_device_message_reuses_existing_order(tmp_path):
+    from wechat_vault.model import Message
+
+    build_package(tmp_path, media_bytes=b"\xff\xd8\xff\xe0" + b"0" * 100)
+    package = StagingPackage(tmp_path)
+    original = next(package.messages())
+    existing = Message.from_record(original.to_record())
+    existing.sort_seq += 123456
+    existing.content_hash = "different-source-normalization"
+    store = FakeStore()
+    store.messages.append(existing)
+    import_staging(package, store, None, config=CONFIG, no_media=True)
+    matched = [m for m in store.messages[1:] if m.msg_uid == existing.msg_uid]
+    assert len(matched) == 1
+    assert matched[0].sort_seq == existing.sort_seq
+
+
+def test_prefetched_identity_map_skips_cross_device_duplicates(tmp_path):
+    from wechat_vault.model import Message
+
+    build_package(tmp_path, media_bytes=b"\xff\xd8\xff\xe0" + b"0" * 100)
+    package = StagingPackage(tmp_path)
+    original = next(package.messages())
+    existing = Message.from_record(original.to_record())
+    existing.sort_seq += 999
+
+    class BatchStore(FakeStore):
+        def message_identities(self, account_id):
+            return {
+                existing.conv_id: {existing.msg_uid: (existing.sort_seq, existing.content_hash)}
+            }
+
+        def iter_messages(self, *args, **kwargs):
+            raise AssertionError("A prefetched import must not query each conversation")
+
+        def put_messages(self, messages):
+            self.messages.extend(messages)
+            return [True] * len(messages)
+
+    store = BatchStore()
+    stats = import_staging(package, store, None, config=CONFIG, no_media=True)
+    assert stats["duplicates"] == 1
+    assert stats["written"] == 1
+    assert all(m.msg_uid != existing.msg_uid for m in store.messages)
+
+
+def test_failed_batch_does_not_advance_sync_watermark(tmp_path):
+    build_package(tmp_path, media_bytes=b"\xff\xd8\xff\xe0" + b"0" * 100)
+
+    class FailingBatchStore(FakeStore):
+        def put_messages(self, messages):
+            raise RuntimeError("simulated cloud outage")
+
+    store = FailingBatchStore()
+    stats = import_staging(StagingPackage(tmp_path), store, None, config=CONFIG, no_media=True)
+    assert stats["errors"] == 2
+    assert not store.sync_states
+
+
+def test_content_variant_is_saved_without_rewriting_canonical_message(tmp_path):
+    build_package(tmp_path, media_bytes=b"\xff\xd8\xff\xe0" + b"0" * 100)
+    package = StagingPackage(tmp_path)
+    original = next(package.messages())
+
+    class VariantStore(FakeStore):
+        def __init__(self):
+            super().__init__()
+            self.variants = []
+
+        def message_identities(self, account_id):
+            return {original.conv_id: {original.msg_uid: (123456, "older-normalization")}}
+
+        def put_message_variants(self, variants):
+            self.variants.extend(variants)
+            return [False] * len(variants)
+
+        def put_messages(self, messages):
+            self.messages.extend(messages)
+            return [True] * len(messages)
+
+    store = VariantStore()
+    stats = import_staging(package, store, None, config=CONFIG, no_media=True)
+    assert stats["duplicates"] == 1
+    assert stats["written"] == 1
+    assert len(store.variants) == 1
+    assert store.variants[0][0].sort_seq == 123456
+    assert store.variants[0][1] == "older-normalization"
+    assert all(m.msg_uid != original.msg_uid for m in store.messages)

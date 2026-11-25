@@ -10,6 +10,10 @@ requires-python = ">=3.11"
 dependencies = [
   "tablestore>=6.4.0",
   "oss2>=2.18.0",
+  "cryptography>=50.0.2",
+  "zstandard>=0.25.0",
+  "av>=18.1.1",
+  "pillow>=13.0.0",
 ]
 
 [project.scripts]
@@ -34,3 +38,6 @@ ignore = ["BLE001"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+
+[tool.uv]
+link-mode = "hardlink"

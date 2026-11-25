@@ -4,6 +4,18 @@
 > 任务：把 Windows 微信（同一个微信号）的聊天记录和媒体，按本文件定义的**暂存包契约**导出，可选上传到阿里云 OSS；**不要写 Tablestore**，最终入库由 Mac 侧完成。
 > 先读同目录的 [DESIGN.md](DESIGN.md)。仓库：`makewheels/wechat-vault`（public，MIT）。
 
+## 2026-11-24 执行补充
+
+- Windows 当前推荐使用 `windows/export_snapshot.py` 直读加密库，见 `windows/README.md`。
+- 密钥已按账号/机器隔离：Infisical `tools/dev`，
+  `/wechat-vault/wxid_vizj1s0qmxl922/windows` 内的 `WECHAT_DB_KEY`。
+  云凭据仍在 `/wechat-vault`。原 `WECHAT_DB_KEY_WIN` 已迁移并删除，禁止只注入公共路径后运行。
+- Mac 为同账号另一个设备目录 `mac-mint-mac-mini`；设备密钥不可混用。
+- Tablestore 为项目自定义结构，不是 ChatLab 文件。导入器按会话及消息 ID 复用已有排序键，
+  防止设备本地 `sort_seq` 不同造成重复；历史重复可用主 README 的维护命令审计。
+- 应用凭据保持不允许删行；历史去重如需应用，使用显式指定的本机维护配置，
+  且须先备份到私有 OSS 并回读确认。不要扩大应用账号的日常权限。
+
 ## 0. 一句话
 
 在 Windows 上跑一个导出器：调 WeFlow 的本地 HTTP API，把 **1452 个会话（含 431 个公众号、群、系统号）** 的消息归一化成 JSONL，媒体解密后按 SHA-256 命名存到 `media/`，可选传到 OSS；产出 `manifest.json` 后交给 Mac 侧合并去重、写 Tablestore。
