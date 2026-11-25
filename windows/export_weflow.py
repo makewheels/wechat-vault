@@ -943,7 +943,7 @@ class Exporter:
         stats = self.stats
         elapsed = int(time.time() - started)
         lines = [
-            "source: win",
+            f"source: {manifest.get('source', 'win')}",
             f"run_id: {manifest['run_id']}",
             f"account_id: {manifest['account_id']}",
             f"weflow_version: {manifest['weflow_version']}",

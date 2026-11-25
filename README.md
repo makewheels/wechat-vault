@@ -41,8 +41,13 @@ sh deploy/run-mac.sh uv run python -u -m wechat_vault.complete_mac --account-roo
 # 已有数据去重：先只读检查；--apply 会先在私有 OSS 备份并回读验证，再删除等价重复行。
 sh deploy/run-mac.sh uv run python -m wechat_vault.dedupe
 # 清理已确认等价的历史重复（日常凭据不授予删除权限）：
-sh deploy/run-mac.sh uv run python -m wechat_vault.dedupe --apply --maintenance-profile default
 ```
+
+## 增量同步（定时）
+
+`python -m wechat_vault.incremental --account-root <账号目录> --source win|mac`：以云端水位回溯 7 天，
+直读本机库导出消息+媒体并幂等合并。Windows 用 `deploy/run-windows.ps1` + `deploy/register-windows-task.ps1`
+（任务计划，每小时），Mac 用 `deploy/launchd.plist.example`（每小时）。详见 `deploy/README.md`。
 
 ## 云端格式与去重
 
