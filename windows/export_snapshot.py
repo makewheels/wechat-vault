@@ -55,6 +55,7 @@ REQUIRED_COLUMNS = {
 }
 MESSAGE_SQL = ('select local_id, server_id, local_type, sort_seq, real_sender_id, create_time, '
                'message_content, compress_content, packed_info_data from "{table}"')
+SINCE_SQL = ' where create_time >= {since}'
 
 
 def md5_hex(text):
@@ -88,9 +89,10 @@ def decode_content(value):
 class SnapshotClient:
     """Serves the small slice of WeFlow's HTTP API that Exporter uses, straight from the databases."""
 
-    def __init__(self, db_storage, passphrase, my_wxid=None, log=print):
+    def __init__(self, db_storage, passphrase, my_wxid=None, log=print, since=0):
         self.root = Path(db_storage)
         self.log = log
+        self.since = int(since or 0)
         self.lock = threading.RLock()
         self.passphrase = passphrase
         self.decode_failures = 0
@@ -234,7 +236,8 @@ class SnapshotClient:
             for db, table in self.talkers.get(talker, []):
                 names = db["names"]
                 self_id = next((rid for rid, name in names.items() if name == self.my_wxid), None)
-                for row in db["con"].execute(MESSAGE_SQL.format(table=table)):
+                query = MESSAGE_SQL.format(table=table) + (SINCE_SQL.format(since=self.since) if self.since else "")
+                for row in db["con"].execute(query):
                     rows.append(self.convert(talker, names, self_id, row))
             rows.sort(key=lambda m: (m["createTime"], m["sortSeq"], m["localId"]))
             self.cache[talker] = rows
@@ -351,7 +354,7 @@ def main(argv=None):
             return ew.main(["--out", opts.out, "--verify", "--ffprobe", opts.ffprobe])
         passphrase = ws.load_passphrase(opts.weflow_config)
         db_storage = ws.find_db_storage(opts.db_storage)
-        client = SnapshotClient(db_storage, passphrase, os.environ.get("WECHAT_MY_WXID"))
+        client = SnapshotClient(db_storage, passphrase, os.environ.get("WECHAT_MY_WXID"), since=opts.since)
         if opts.check:
             return run_check(client)
         workdir = Path(opts.out) / ".media-work"

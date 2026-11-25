@@ -343,6 +343,19 @@ class ExportTests(unittest.TestCase):
         self.assertEqual(starts, {str(max(r["create_time"] for r in before) - 86400)})
         self.assertFalse(self.json_file("manifest.json")["full"])
 
+    def test_since_exports_only_recent_messages_and_skips_empty_conversations(self):
+        since = BASE + 100 * 60
+        group_rows = len(self.fake.messages[GROUP])
+        self.assertGreater(group_rows, 100)
+        self.assertEqual(self.run_export("--since", str(since), "--conv", GROUP, "--conv", FRIEND), 0, self.output)
+        recent = self.records(GROUP)
+        self.assertEqual(len(recent), group_rows - 100)
+        self.assertTrue(all(r["create_time"] >= since for r in recent))
+        self.assertFalse((self.out / "messages" / f"{ew.conv_key(FRIEND)}.jsonl").exists())
+        manifest = self.json_file("manifest.json")
+        self.assertEqual((manifest["full"], manifest["since"], manifest["counts"]["sessions"]), (False, since, 1))
+        self.assertEqual(ew.verify_package(self.out)[0], [])
+
     def test_limit_keeps_the_latest_messages_only(self):
         self.assertEqual(self.run_export("--conv", GROUP, "--limit", "5"), 0, self.output)
         self.assertEqual([r["text"] for r in self.records(GROUP)], [f"msg {i}" for i in range(115, 120)])

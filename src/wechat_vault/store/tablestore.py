@@ -512,13 +512,18 @@ class TableStore:
         return self.get_row("wx_sync_state", [("source_id", source_id), ("conv_id", conv_id)])
 
     def iter_messages(
-        self, conv_id: str, *, columns: list[str] | None = None, limit: int = 5000
+        self,
+        conv_id: str,
+        *,
+        columns: list[str] | None = None,
+        limit: int = 5000,
+        min_sort_seq: int | None = None,
     ) -> Iterator[dict[str, Any]]:
         from tablestore import INF_MAX, INF_MIN, Direction
 
         start: list[tuple[str, Any]] | None = [
             ("conv_id", conv_id),
-            ("sort_seq", INF_MIN),
+            ("sort_seq", INF_MIN if min_sort_seq is None else min_sort_seq),
             ("msg_uid", INF_MIN),
         ]
         end = [("conv_id", conv_id), ("sort_seq", INF_MAX), ("msg_uid", INF_MAX)]

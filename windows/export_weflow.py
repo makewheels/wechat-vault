@@ -742,7 +742,7 @@ class Exporter:
         entry = self.state["conversations"].get(sess.talker) or {}
         if opts.media_only:
             return final.exists() and self.pending_media(final) > 0
-        if opts.full or opts.limit:
+        if opts.full or opts.limit or opts.since:
             return True
         return not (entry.get("done") and final.exists()) or opts.incremental
 
@@ -757,7 +757,8 @@ class Exporter:
         limited = opts.limit > 0
         prev_ct = to_int(prev.get("last_create_time"))
         merge = bool(opts.incremental and not limited and prev.get("done") and final.exists() and prev_ct > 0)
-        threshold = max(0, prev_ct - LOOKBACK_SEC) if merge else 0
+        # --since writes a package holding only recent messages; the importer skips what the cloud already has.
+        threshold = opts.since or (max(0, prev_ct - LOOKBACK_SEC) if merge else 0)
         start_param = threshold or None
         want_media = not opts.no_media
         seen = set()
@@ -805,7 +806,7 @@ class Exporter:
                     want = page_size if remaining is None else min(page_size, remaining)
                     if want <= 0:
                         break
-                    expect_rows = first_page and sess.last_ts > 0 and not merge
+                    expect_rows = first_page and sess.last_ts > 0 and not merge and not opts.since
                     msgs, has_more, page_size = self.get_page(talker, offset, want, want_media, start_param,
                                                               expect_rows)
                     if not msgs and expect_rows:
@@ -842,7 +843,10 @@ class Exporter:
                 tmp.unlink()
 
         entry = dict(prev)
-        if ok:
+        if ok and opts.since and not counts["messages"]:
+            tmp.unlink(missing_ok=True)
+            entry.update(done=False, messages=0, media=0, errors=conv.errors)
+        elif ok:
             if unsorted:
                 sort_jsonl_file(tmp)
             os.replace(tmp, final)
@@ -858,6 +862,8 @@ class Exporter:
             self.state["conversations"][talker] = entry
             self.save_state()
             self.stats["conversations_ok" if ok else "conversations_failed"] += 1
+        if opts.since and ok and not counts["messages"]:
+            return
         self.log(f"[{position}/{total}] {key} {sess.session_type:8s} {'ok' if ok else 'FAILED'} "
                  f"messages={counts['messages']} media={counts['media']} errors={conv.errors}")
 
@@ -921,6 +927,7 @@ class Exporter:
             "weflow_version": opts.weflow_version,
             "exported_at": now_iso(),
             "full": bool(opts.full and not (opts.conv or opts.limit_convs or opts.limit or opts.no_media)),
+            **({"since": opts.since} if opts.since else {}),
             "counts": {"sessions": len(session_rows), "messages": messages, "media_files": media_files,
                        "media_bytes": media_bytes, "errors": self.error_count},
             "media_prefix": "media/sha256/",
@@ -1145,6 +1152,8 @@ def build_parser():
     mode.add_argument("--full", action="store_true", help="ignore state.json and export every conversation")
     mode.add_argument("--incremental", action="store_true",
                       help="refresh finished conversations from one day before their last message")
+    mode.add_argument("--since", type=int, default=0, metavar="EPOCH",
+                      help="export only messages created at or after this Unix time (an incremental package)")
     parser.add_argument("--conv", action="append", default=[], help="export only this talker (repeatable)")
     parser.add_argument("--limit", type=int, default=0, help="smoke test: latest N messages per conversation")
     parser.add_argument("--limit-convs", type=int, default=0, help="only the first N conversations")

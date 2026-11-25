@@ -30,6 +30,7 @@ def import_staging(
     no_media: bool = False,
     dry_run: bool = False,
     workers: int = 1,
+    identities_since: int | None = None,
     log: Callable[[str], None] = print,
 ) -> dict[str, int]:
     manifest = package.manifest
@@ -115,7 +116,10 @@ def import_staging(
 
     # Reuse the stored order key for a message already present on another device.
     # Local sort_seq values are not a cross-device identity.
-    prefetched = not dry_run and hasattr(store, "message_identities")
+    # An incremental package (identities_since = earliest create_time in it) only needs the cloud rows from
+    # that point on, read per conversation; sort_seq is create_time * 1000 on both devices.
+    prefetched = not dry_run and identities_since is None and hasattr(store, "message_identities")
+    since_sort = None if identities_since is None else max(identities_since - 86400, 0) * 1000
     stored_ids: dict[str, dict[str, tuple[int, str]]] = (
         store.message_identities(account_id) if prefetched else {})
     batch = []
@@ -124,9 +128,12 @@ def import_staging(
     for message in package.messages(limit=limit):
         if not dry_run:
             if message.conv_id not in stored_ids and not prefetched:
+                read = {"columns": ["content_hash"]}
+                if since_sort is not None:
+                    read["min_sort_seq"] = since_sort
                 stored_ids[message.conv_id] = {
                     str(row["msg_uid"]): (int(row["sort_seq"]), str(row.get("content_hash") or ""))
-                    for row in store.iter_messages(message.conv_id, columns=["content_hash"])
+                    for row in store.iter_messages(message.conv_id, **read)
                 }
             identities = stored_ids.setdefault(message.conv_id, {})
             already_known = message.msg_uid in identities
@@ -182,6 +189,8 @@ def import_staging(
         assert store is not None
         records = []
         for conv_id, conversation in sessions.items():
+            if identities_since is not None and conv_id not in counts:
+                continue
             conversation.first_ts = first_ts.get(conv_id, conversation.first_ts)
             conversation.last_ts = last_ts.get(conv_id, conversation.last_ts)
             records.append({"conv_id": conv_id, "last_sort_seq": max_sort.get(conv_id, 0),

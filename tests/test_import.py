@@ -18,8 +18,9 @@ class FakeStore:
         self.media_updates = []
         self.existing_rows = {}
 
-    def iter_messages(self, conv_id, columns=None):
-        return (m.to_record() for m in self.messages if m.conv_id == conv_id)
+    def iter_messages(self, conv_id, columns=None, min_sort_seq=None):
+        return (m.to_record() for m in self.messages
+                if m.conv_id == conv_id and m.sort_seq >= (min_sort_seq or 0))
 
     def put_account(self, *args, **kwargs):
         self.accounts.append((args, kwargs))
@@ -222,6 +223,40 @@ def test_prefetched_identity_map_skips_cross_device_duplicates(tmp_path):
     assert stats["duplicates"] == 1
     assert stats["written"] == 1
     assert all(m.msg_uid != existing.msg_uid for m in store.messages)
+
+
+def test_incremental_import_reads_only_recent_cloud_rows_per_conversation(tmp_path):
+    from wechat_vault.model import Message
+
+    build_package(tmp_path, media_bytes=b"\xff\xd8\xff\xe0" + b"0" * 100)
+    package = StagingPackage(tmp_path)
+    original = next(package.messages())
+    existing = Message.from_record(original.to_record())
+    existing.sort_seq += 5_000_000
+
+    class IncrementalStore(FakeStore):
+        def __init__(self):
+            super().__init__()
+            self.reads = []
+
+        def message_identities(self, account_id):
+            raise AssertionError("An incremental import must not prefetch every identity")
+
+        def iter_messages(self, conv_id, columns=None, min_sort_seq=None):
+            self.reads.append((conv_id, min_sort_seq))
+            return super().iter_messages(conv_id, columns, min_sort_seq)
+
+        def put_messages(self, messages):
+            self.messages.extend(messages)
+            return [True] * len(messages)
+
+    store = IncrementalStore()
+    store.messages.append(existing)
+    stats = import_staging(package, store, None, config=CONFIG, no_media=True, identities_since=90_000)
+    assert store.reads == [(existing.conv_id, 3_600_000)]
+    assert stats["duplicates"] == 1
+    assert stats["written"] == 1
+    assert [s["conv_id"] for s in store.sync_states] == [existing.conv_id]
 
 
 def test_failed_batch_does_not_advance_sync_watermark(tmp_path):
