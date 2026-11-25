@@ -176,23 +176,46 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def success_message(summary: dict, seconds: int, host: str) -> str:
+SOURCE_LABELS = {"win": "Windows", "mac": "Mac"}
+
+
+def success_card(summary: dict, seconds: int, host: str) -> dict:
     result, exported = summary["import"], summary["export"]
-    window = time.strftime("%Y-%m-%d", time.localtime(summary["since"])) if summary["since"] else "全量"
-    return (
-        f"[wechat-vault] ✅ 微信增量同步成功 source={summary['source']} host={host}\n"
-        f"起点 {window}，耗时 {seconds}s\n"
-        f"导出 {exported['sessions']} 个会话 / {exported['messages']} 条消息 / {exported['media_files']} 个媒体\n"
-        f"新增消息 {result['written']}，已存在 {result['duplicates']}\n"
-        f"媒体新上传 {result['media_uploaded']}，已存在 {result['media_present']}，缺失 {result['media_missing']}"
-    )
+    since = time.strftime("%Y-%m-%d %H:%M", time.localtime(summary["since"])) if summary["since"] else "全量"
+    return {
+        "title": f"✅ 微信归档同步成功 · {SOURCE_LABELS[summary['source']]}",
+        "color": "green",
+        "fields": [
+            ("主机", host),
+            ("耗时", f"{seconds} 秒"),
+            ("同步起点", since),
+            ("导出会话", str(exported["sessions"])),
+            ("导出消息", str(exported["messages"])),
+            ("导出媒体", str(exported["media_files"])),
+            ("新增消息", str(result["written"])),
+            ("已存在（跳过）", str(result["duplicates"])),
+            ("媒体新上传", str(result["media_uploaded"])),
+            ("媒体已存在", str(result["media_present"])),
+        ],
+        "body": f"媒体缺失 {result['media_missing']} 个" if result["media_missing"] else "",
+    }
+
+
+def failure_card(source: str, host: str, message: str) -> dict:
+    return {
+        "title": f"❌ 微信归档同步失败 · {SOURCE_LABELS[source]}",
+        "color": "red",
+        "fields": [("主机", host), ("来源", source)],
+        "body": f"**错误**\n{message}\n\n详见本机日志；下次计划时间会自动重试。",
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     host = socket.gethostname()
     if args.test_notify:
-        ok = notify.send(f"[wechat-vault] 通知测试 source={args.source} host={host}")
+        ok = notify.send_card(f"🔔 微信归档同步通知测试 · {SOURCE_LABELS[args.source]}", "blue",
+                              [("主机", host), ("来源", args.source)])
         log(f"[incremental] test notification {'sent' if ok else 'NOT sent'}")
         return 0 if ok else 1
     started = time.time()
@@ -208,13 +231,12 @@ def main(argv: list[str] | None = None) -> int:
         message = f"{type(exc).__name__} {detail}".rstrip()
         log(f"[incremental] FAILED: {message}")
         if not args.no_notify_failure:
-            sent = notify.send(
-                f"[wechat-vault] ❌ 微信增量同步失败 source={args.source} host={host}\n{message}")
+            sent = notify.send_card(**failure_card(args.source, host, message))
             log(f"[incremental] failure notification {'sent' if sent else 'NOT sent'}")
         return 1
     log("[incremental] done")
     if not args.dry_run:
-        sent = notify.send(success_message(summary, int(time.time() - started), host))
+        sent = notify.send_card(**success_card(summary, int(time.time() - started), host))
         log(f"[incremental] success notification {'sent' if sent else 'NOT sent'}")
     return 0
 

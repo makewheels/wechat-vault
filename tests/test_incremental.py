@@ -1,7 +1,8 @@
 import pytest
 
 from wechat_vault.incremental import (
-    AlreadyRunning, choose_since, cloud_watermark, single_instance, success_message)
+    AlreadyRunning, choose_since, cloud_watermark, failure_card, single_instance, success_card)
+from wechat_vault.notify import build_card
 
 NOW = 1_800_000_000
 DAY = 86400
@@ -53,15 +54,24 @@ def test_second_run_is_refused_while_the_first_holds_the_lock():
         pass
 
 
-def test_success_message_summarizes_counts():
+def test_success_card_summarizes_counts_and_carries_send_time():
     summary = {
         "source": "win",
         "since": 0,
         "export": {"sessions": 63, "messages": 2310, "media_files": 247},
         "import": {"written": 6, "duplicates": 2304, "media_uploaded": 3, "media_present": 257, "media_missing": 0},
     }
-    text = success_message(summary, 84, "host1")
-    assert "成功" in text
-    assert "63 个会话 / 2310 条消息 / 247 个媒体" in text
-    assert "新增消息 6，已存在 2304" in text
-    assert "媒体新上传 3" in text
+    parts = success_card(summary, 84, "host1")
+    assert parts["color"] == "green" and "成功" in parts["title"]
+    assert dict(parts["fields"])["新增消息"] == "6"
+    assert dict(parts["fields"])["导出消息"] == "2310"
+    card = build_card(**parts)
+    assert card["header"]["template"] == "green"
+    assert card["elements"][-1]["elements"][0]["content"].startswith("发送时间 ")
+
+
+def test_failure_card_is_red_and_shows_the_error():
+    parts = failure_card("mac", "host2", "RuntimeError boom")
+    card = build_card(**parts)
+    assert card["header"]["template"] == "red"
+    assert "RuntimeError boom" in str(card["elements"])
