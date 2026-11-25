@@ -13,9 +13,51 @@
 - 设计定稿（2026-11-22）：同一个微信号、Mac/Windows 都用 WeFlow、媒体全量（含视频解密）、新建 Tablestore 实例、全量会话含公众号。
 - Mac 侧 CLI 已实现：`init` / `import-staging` / `sync` / `media` / `verify` / `stats`，18 个单测通过。
 - Windows 侧按 `HANDOFF-WINDOWS.md` 产出暂存包；Mac 用 `import-staging` 入库。
-- 云资源（Tablestore 实例、OSS bucket、RAM）未创建；跑 `init` 前先注入凭据。
+- 云资源已存在（2026-11-24 实查）：Tablestore 实例和私有 OSS 均为 `wechat-vault`。应用凭据不含建表/删行权限；现有库导入无需跑 `init`。
 
-## 快速开始
+## Mac 直读与密钥隔离
+
+Mac 的 WeFlow 当前卡在原生库初始化（`InitProtection -101`），改用仓库内直读器：
+只读打开加密数据库、内存解密、校验各页 HMAC、合并已提交 WAL，验证暂存包后入云。
+临时导出只放系统临时目录，退出时清理；正文和原始 XML 都移除媒体解密参数。
+
+Infisical `tools/dev`：云凭据位于 `/wechat-vault`；设备密钥按
+`/wechat-vault/<微信ID>/<机器标识>` 隔离。
+当前 Mac 为 `/wechat-vault/wxid_vizj1s0qmxl922/mac-mint-mac-mini`，
+Windows 为 `/wechat-vault/wxid_vizj1s0qmxl922/windows`（后者主机名未核实）。
+各自使用 `WECHAT_DB_KEY`；Mac 图片密钥为 `WECHAT_IMAGE_AES_KEY`。
+公共目录不再存设备密钥；禁止将 Mac 密钥注入 Windows。
+
+```bash
+export WECHAT_ACCOUNT_ID=wxid_vizj1s0qmxl922
+export WECHAT_DEVICE_ID=mac-mint-mac-mini
+# account_root 指向该账号本机目录，包含 db_storage/ 和 msg/
+account_root="$HOME/Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/wxid_vizj1s0qmxl922_2b0d"
+sh deploy/run-mac.sh uv run python -u -m wechat_vault.direct_sync --account-root "$account_root"
+sh deploy/run-mac.sh uv run python -u -m wechat_vault.local_media --account-root "$account_root" --account "$WECHAT_ACCOUNT_ID" --device "$WECHAT_DEVICE_ID"
+sh deploy/run-mac.sh uv run python -u -m wechat_vault.media_finish --account-root "$account_root" --account "$WECHAT_ACCOUNT_ID" --device "$WECHAT_DEVICE_ID" --only-voice
+# 等前三阶段完成，转换图片、关联媒体、备份去重并独立回读校验：
+sh deploy/run-mac.sh uv run python -u -m wechat_vault.complete_mac --account-root "$account_root" --account "$WECHAT_ACCOUNT_ID" --device "$WECHAT_DEVICE_ID" --maintenance-profile default
+# 已有数据去重：先只读检查；--apply 会先在私有 OSS 备份并回读验证，再删除等价重复行。
+sh deploy/run-mac.sh uv run python -m wechat_vault.dedupe
+# 清理已确认等价的历史重复（日常凭据不授予删除权限）：
+sh deploy/run-mac.sh uv run python -m wechat_vault.dedupe --apply --maintenance-profile default
+```
+
+## 云端格式与去重
+
+Tablestore 存项目自定义结构，**不是 ChatLab JSON**：`wx_messages` 每条消息一行，
+保存会话、发送者、时间、类型、清洗后的正文/XML，以及 OSS 媒体 SHA-256 引用。
+其余表保存账号、会话、联系人、同步水位、媒体任务和内容冲突。
+若需导入 ChatLab，需另做格式转换；不能把表扫描结果直接当成 ChatLab 文件。
+
+去重身份为 `(conv_id, msg_uid)`：优先使用服务端消息 ID，无 ID 时使用内容指纹。
+设备本地 `sort_seq` 仅供排序，导入时复用同身份已有行的排序键。
+历史重复清理按会话隔离，正文/发送者/时间不一致时保留并报告，不直接删除。
+媒体按解密后 SHA-256 去重。原始 `wxgf` 解密容器保留，同时生成 JPEG 查看副本；
+语音保留 SILK，未下载到本机的媒体明确标为缺失。索引和运行摘要位于私有 OSS `manifests/`。
+
+## 原 WeFlow 路径（仅在其 API 可用时）
 
 ```bash
 uv sync

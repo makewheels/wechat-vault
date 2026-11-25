@@ -134,16 +134,17 @@ def sort_seq_for(create_time: int, source_sort_seq: Any) -> int:
 
 
 _SECRET_ATTR = re.compile(
-    r"(?i)\b(aeskey|cdnthumbaeskey|cdnbigimgaeskey|sessionid|access_token|token)"
+    r"(?i)(?<![\w:.-])([\w:.-]*aeskey[\w:.-]*|sessionid|access_token|token)"
     r"\s*=\s*(?:\"[^\"]*\"|'[^']*'|[^\s>]+)"
 )
 _SECRET_QS = re.compile(r"(?i)\b(access_token|token)=[^&\s\"'<>]+")
+_SECRET_ELEMENT = re.compile(r"(?is)<(?:aeskey|cdnthumbaeskey|cdnbigimgaeskey|access_token|token)\b[^>]*>.*?</(?:aeskey|cdnthumbaeskey|cdnbigimgaeskey|access_token|token)\s*>")
 _TITLE = re.compile(r"<title>(?:\s*<!\[CDATA\[)?(.*?)(?:\]\]>\s*)?</title>", re.DOTALL)
 
 
 def sanitize_raw(raw: str) -> tuple[str, bool]:
     """Remove WeChat media keys/token-ish attributes; cap huge app XML."""
-    text = _SECRET_ATTR.sub(lambda m: f'{m.group(1)}=""', raw or "")
+    text = _SECRET_ATTR.sub(lambda m: f'{m.group(1)}=""', _SECRET_ELEMENT.sub("", raw or ""))
     text = _SECRET_QS.sub(lambda m: f"{m.group(1)}=", text)
     truncated = len(text.encode("utf-8")) > RAW_LIMIT
     if truncated:
@@ -209,7 +210,7 @@ class Message:
             "sender": self.sender,
             "local_type": self.local_type,
             "kind": self.kind,
-            "text": self.text,
+            "text": sanitize_raw(self.text)[0],
             "raw": self.raw,
             "media_ref": self.media_ref,
             "media_sha256": self.media_sha256,
@@ -232,7 +233,7 @@ class Message:
             "is_send": bool(self.is_send),
             "kind": self.kind,
             "local_type": self.local_type,
-            "text": self.text,
+            "text": sanitize_raw(self.text)[0],
             "raw": self.raw,
             "local_seq": self.local_seq,
             "create_time": self.create_time,

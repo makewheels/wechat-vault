@@ -12,7 +12,8 @@ class ObjectStore:
         import oss2
 
         auth = oss2.Auth(config.ak_id, config.ak_secret)
-        self.bucket = oss2.Bucket(auth, config.oss_endpoint, config.bucket)
+        self.bucket = oss2.Bucket(auth, config.oss_endpoint, config.bucket,
+                                  session=oss2.Session(pool_size=128))
         self.config = config
 
     @staticmethod
@@ -37,11 +38,11 @@ class ObjectStore:
             return None
         return int(result.content_length)
 
-    def put_file(self, path: str | Path, key: str, mime: str, sha256: str = "") -> None:
+    def put_file(self, path: str | Path, key: str, mime: str, sha256: str = ""):
         headers = {"Content-Type": mime}
         if sha256:
             headers["x-oss-meta-sha256"] = sha256
-        self.bucket.put_object_from_file(key, str(path), headers=headers)
+        return self.bucket.put_object_from_file(key, str(path), headers=headers)
 
     def get_bytes(self, key: str) -> bytes:
         return self.bucket.get_object(key).read()
@@ -53,5 +54,5 @@ class ObjectStore:
     def list_keys(self, prefix: str):
         import oss2
 
-        for obj in oss2.ObjectIterator(self.bucket, prefix=prefix):
+        for obj in oss2.ObjectIterator(self.bucket, prefix=prefix, max_keys=1000):
             yield obj.key

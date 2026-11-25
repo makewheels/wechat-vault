@@ -157,6 +157,7 @@ def sanitize_raw(raw):
     cleaned = AESKEY_ELEM_RE.sub("", raw)
     cleaned = AESKEY_ATTR_RE.sub("", cleaned)
     cleaned = TOKEN_RE.sub(r"\1=\2", cleaned)
+    cleaned = LEAK_RE.sub("", cleaned)
     data = cleaned.encode("utf-8", "replace")
     if len(data) <= MAX_RAW_BYTES:
         return cleaned, False
@@ -210,7 +211,7 @@ def normalize_message(talker, account_id, m):
         "sender": sender,
         "local_type": local_type,
         "kind": kind,
-        "text": text_for(kind, content, raw),
+        "text": sanitize_raw(text_for(kind, content, raw))[0],
         "raw": raw,
         "media_ref": None,
         "media_sha256": None,
@@ -996,7 +997,7 @@ class Exporter:
 REQUIRED_FIELDS = ("schema_version", "conv_id", "talker", "msg_uid", "server_id", "local_id", "local_seq",
                    "sort_seq", "create_time", "is_send", "sender", "local_type", "kind", "text", "raw",
                    "media_ref", "media_sha256", "media_ext", "media_size", "media_mime", "flags")
-LEAK_RE = re.compile(r"[\w:.-]*aeskey[\w:.-]*\s*=\s*[\"'][^\"']+|(?<!\w)(?:access_)?token\s*=\s*[\"']?[^&\"'\s<>]+",
+LEAK_RE = re.compile(r"(?<![\w:.-])[\w:.-]*aeskey[\w:.-]*\s*=\s*[\"'][^\"']+|(?<!\w)(?:access_)?token\s*=\s*[\"']?[^&\"'\s<>]+",
                      re.IGNORECASE)
 
 
