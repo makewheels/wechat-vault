@@ -1,6 +1,7 @@
 import pytest
 
-from wechat_vault.incremental import AlreadyRunning, choose_since, cloud_watermark, single_instance
+from wechat_vault.incremental import (
+    AlreadyRunning, choose_since, cloud_watermark, single_instance, success_message)
 
 NOW = 1_800_000_000
 DAY = 86400
@@ -50,3 +51,17 @@ def test_second_run_is_refused_while_the_first_holds_the_lock():
             pass
     with single_instance("wechat-vault-test-lock"):
         pass
+
+
+def test_success_message_summarizes_counts():
+    summary = {
+        "source": "win",
+        "since": 0,
+        "export": {"sessions": 63, "messages": 2310, "media_files": 247},
+        "import": {"written": 6, "duplicates": 2304, "media_uploaded": 3, "media_present": 257, "media_missing": 0},
+    }
+    text = success_message(summary, 84, "host1")
+    assert "成功" in text
+    assert "63 个会话 / 2310 条消息 / 247 个媒体" in text
+    assert "新增消息 6，已存在 2304" in text
+    assert "媒体新上传 3" in text

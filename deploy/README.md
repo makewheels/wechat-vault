@@ -1,6 +1,6 @@
 # 部署
 
-两台机器每天各跑一次增量同步：Mac 每天 12:30、Windows 周一至周五 12:03（错开，避免同时写云端）：`python -m wechat_vault.incremental`。失败时发飞书群通知（见下）。
+两台机器每天各跑一次增量同步：Mac 每天 12:30、Windows 周一至周五 12:03（错开，避免同时写云端）：`python -m wechat_vault.incremental`。结果发飞书群通知（见下）。
 
 流程：取云端该来源（`win` / `mac`）的水位（`wx_sync_state` 的最大 `last_create_time`），回溯 7 天，
 直读本机数据库导出这段时间的消息和媒体，再幂等合并到 Tablestore / OSS。已存在的消息按 `(conv_id, msg_uid)` 跳过，
@@ -34,9 +34,10 @@ Start-ScheduledTask wechat-vault-incremental     # 手动触发
 Unregister-ScheduledTask wechat-vault-incremental -Confirm:$false   # 卸载
 ```
 
-## 失败通知（飞书）
+## 结果通知（飞书）
 
-同步失败（导出/校验/导入出错）时 `incremental` 向飞书群发一条消息：来源、主机、错误类型。`--no-notify` 关闭，`--test-notify` 发测试消息。
+每次同步结束，`incremental` 向飞书群「微信归档同步通知」发一条消息：成功时汇总导出/新增/已存在消息数和媒体上传数、耗时；失败时给出来源、主机、错误类型。
+`--dry-run` 不发成功消息；`--no-notify-failure` 只关闭失败消息（Windows 包装脚本重试时，只有最后一次尝试才报失败）；`--test-notify` 发测试消息。
 `notify.py` 优先用开放平台 API（`FEISHU_APP_ID` + `FEISHU_APP_SECRET` + `FEISHU_CHAT_ID`），否则用已登录机器人的 `lark-cli`（只需 `FEISHU_CHAT_ID`）。
 `FEISHU_CHAT_ID`、`FEISHU_APP_ID` 在 Infisical `/wechat-vault`。Mac 靠 `lark-cli`（launchd 下可访问钥匙串，ssh 里不行）；
 Windows 没有 `lark-cli`，需要在 Infisical 补 `FEISHU_APP_SECRET` 才能发。

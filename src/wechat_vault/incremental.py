@@ -170,20 +170,35 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-media", action="store_true", help="messages only")
     parser.add_argument("--workers", type=int, default=16)
     parser.add_argument("--dry-run", action="store_true", help="export and verify, write nothing to the cloud")
-    parser.add_argument("--no-notify", action="store_true", help="do not send a Feishu message when the run fails")
+    parser.add_argument("--no-notify-failure", action="store_true",
+                        help="do not send the Feishu failure message (a retrying wrapper sends it on the last attempt)")
     parser.add_argument("--test-notify", action="store_true", help="send a test Feishu message and exit")
     return parser
 
 
+def success_message(summary: dict, seconds: int, host: str) -> str:
+    result, exported = summary["import"], summary["export"]
+    window = time.strftime("%Y-%m-%d", time.localtime(summary["since"])) if summary["since"] else "全量"
+    return (
+        f"[wechat-vault] ✅ 微信增量同步成功 source={summary['source']} host={host}\n"
+        f"起点 {window}，耗时 {seconds}s\n"
+        f"导出 {exported['sessions']} 个会话 / {exported['messages']} 条消息 / {exported['media_files']} 个媒体\n"
+        f"新增消息 {result['written']}，已存在 {result['duplicates']}\n"
+        f"媒体新上传 {result['media_uploaded']}，已存在 {result['media_present']}，缺失 {result['media_missing']}"
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    host = socket.gethostname()
     if args.test_notify:
-        ok = notify.send(f"[wechat-vault] 通知测试 source={args.source} host={socket.gethostname()}")
+        ok = notify.send(f"[wechat-vault] 通知测试 source={args.source} host={host}")
         log(f"[incremental] test notification {'sent' if ok else 'NOT sent'}")
         return 0 if ok else 1
+    started = time.time()
     try:
         with single_instance(f"wechat-vault-incremental-{args.source}"):
-            run(args)
+            summary = run(args)
     except AlreadyRunning:
         log("[incremental] another run is in progress; skipped")
         return 0
@@ -192,12 +207,15 @@ def main(argv: list[str] | None = None) -> int:
         detail = str(exc) if isinstance(exc, (RuntimeError, ValueError)) else ""
         message = f"{type(exc).__name__} {detail}".rstrip()
         log(f"[incremental] FAILED: {message}")
-        if not args.no_notify:
+        if not args.no_notify_failure:
             sent = notify.send(
-                f"[wechat-vault] 微信增量同步失败 source={args.source} host={socket.gethostname()}\n{message}")
+                f"[wechat-vault] ❌ 微信增量同步失败 source={args.source} host={host}\n{message}")
             log(f"[incremental] failure notification {'sent' if sent else 'NOT sent'}")
         return 1
     log("[incremental] done")
+    if not args.dry_run:
+        sent = notify.send(success_message(summary, int(time.time() - started), host))
+        log(f"[incremental] success notification {'sent' if sent else 'NOT sent'}")
     return 0
 
 
