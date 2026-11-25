@@ -3,8 +3,8 @@
 param([int] $EveryMinutes = 60, [string] $TaskName = 'wechat-vault-incremental')
 
 $script = Join-Path $PSScriptRoot 'run-windows.ps1'
-$action = New-ScheduledTaskAction -Execute 'powershell.exe' `
-    -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$script`""
+$action = New-ScheduledTaskAction -Execute 'conhost.exe' `
+    -Argument "--headless powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$script`""
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes $EveryMinutes)
 $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -StartWhenAvailable -AllowStartIfOnBatteries `
     -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Hours 2)
