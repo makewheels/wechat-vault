@@ -16,6 +16,7 @@ class FakeStore:
         self.tasks = []
         self.sync_states = []
         self.media_updates = []
+        self.existing_rows = {}
 
     def iter_messages(self, conv_id, columns=None):
         return (m.to_record() for m in self.messages if m.conv_id == conv_id)
@@ -38,6 +39,9 @@ class FakeStore:
 
     def update_message_media(self, message, fields):
         self.media_updates.append((message.msg_uid, fields))
+
+    def get_message(self, conv_id, sort_seq, msg_uid):
+        return self.existing_rows.get(msg_uid, {"media_state": "pending"})
 
 
 class FakeOSS:
@@ -155,6 +159,14 @@ def test_import_existing_row_gets_media_fields(tmp_path):
     assert fields["media_state"] == "done"
     assert fields["media_key"] == f"media/sha256/{sha}.jpg"
 
+
+def test_import_keeps_media_already_linked_by_another_device(tmp_path):
+    build_package(tmp_path, media_bytes=b"\xff\xd8\xff\xe0" + b"0" * 100)
+    store, oss = FakeStore(), FakeOSS()
+    store.existing_rows["s2"] = {"media_state": "done"}
+    store.put_message = lambda message: (store.messages.append(message), False)[1]
+    import_staging(StagingPackage(tmp_path), store, oss, config=CONFIG)
+    assert store.media_updates == []
 
 def test_import_dry_run(tmp_path):
     build_package(tmp_path, media_bytes=b"\xff\xd8\xff\xe0" + b"0" * 100)

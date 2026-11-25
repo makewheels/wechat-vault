@@ -72,6 +72,14 @@ def _retry_request(operation):
             time.sleep(2**attempt)
 
 
+def _columns_to_get(columns: list[str] | None, table: str) -> list[str] | None:
+    # Tablestore skips rows holding none of the requested columns, so a made-up column hides every row.
+    # For "keys only" read a column every row has (messages always carry content_hash), else all columns.
+    if columns != []:
+        return columns
+    return ["content_hash"] if table == "wx_messages" else []
+
+
 class TableStore:
     def __init__(self, config: Config):
         from tablestore import OTSClient
@@ -521,7 +529,7 @@ class TableStore:
                     Direction.FORWARD,
                     start,
                     end,
-                    columns_to_get=columns if columns != [] else ["__archive_pk_only__"],
+                    columns_to_get=_columns_to_get(columns, "wx_messages"),
                     limit=limit,
                 )
             )
@@ -545,7 +553,7 @@ class TableStore:
                     Direction.FORWARD,
                     start,
                     end,
-                    columns_to_get=columns if columns != [] else ["__archive_pk_only__"],
+                    columns_to_get=_columns_to_get(columns, table),
                     limit=limit,
                 )
             )

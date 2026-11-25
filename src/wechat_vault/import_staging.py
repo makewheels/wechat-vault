@@ -92,7 +92,10 @@ def import_staging(
             store.put_media_task(message, message.media_ref)
         inserted = store.put_message(message)
         if not inserted and message.media_state == "done":
-            store.update_message_media(message, _media_fields(message))
+            # Never replace media another device already linked (it may be the full-size original).
+            existing = store.get_message(message.conv_id, message.sort_seq, message.msg_uid)
+            if existing is not None and existing.get("media_state") != "done":
+                store.update_message_media(message, _media_fields(message))
         return inserted
 
     def drain(keep: int) -> None:
@@ -140,10 +143,12 @@ def import_staging(
         if dry_run:
             continue
         assert store is not None
-        if no_media and already_known and known[1] == message.content_hash:
+        # Already stored and nothing to upload: no per-row write needed.
+        text_only = no_media or not message.media_sha256
+        if text_only and already_known and known[1] == message.content_hash:
             stats["duplicates"] += 1
             continue
-        if no_media and already_known and hasattr(store, "put_message_variants"):
+        if text_only and already_known and hasattr(store, "put_message_variants"):
             variants.append((message, known[1]))
             if len(variants) >= 200:
                 pending.append((message, pool.submit(store.put_message_variants, variants), len(variants)))
