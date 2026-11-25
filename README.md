@@ -47,7 +47,7 @@ sh deploy/run-mac.sh uv run python -m wechat_vault.dedupe
 
 `python -m wechat_vault.incremental --account-root <账号目录> --source win|mac`：以云端水位回溯 7 天，
 直读本机库导出消息+媒体并幂等合并。Windows 用 `deploy/run-windows.ps1` + `deploy/register-windows-task.ps1`
-（任务计划，每小时），Mac 用 `deploy/launchd.plist.example`（每小时）。详见 `deploy/README.md`。
+（任务计划，每天 12:30），Mac 用 `deploy/launchd.plist.example`（每天 12:30）；失败发飞书通知。详见 `deploy/README.md`。
 
 ## 云端格式与去重
 
