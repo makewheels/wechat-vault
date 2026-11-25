@@ -10,8 +10,13 @@
 		<string>-lc</string>
 		<string>cd /Users/mint/workspace/tools/wechat-vault &amp;&amp; sh deploy/run-mac.sh uv run python -u -m wechat_vault.incremental --account-root /Users/mint/Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/wxid_vizj1s0qmxl922_2b0d --source mac</string>
 	</array>
-	<key>StartInterval</key>
-	<integer>3600</integer>
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Hour</key>
+		<integer>12</integer>
+		<key>Minute</key>
+		<integer>30</integer>
+	</dict>
 	<key>RunAtLoad</key>
 	<true/>
 	<key>StandardOutPath</key>

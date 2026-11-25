@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import socket
 import sys
 import tempfile
 import time
@@ -20,6 +21,8 @@ from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
+
+from . import notify
 
 LOOKBACK_DAYS = 7
 
@@ -167,11 +170,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-media", action="store_true", help="messages only")
     parser.add_argument("--workers", type=int, default=16)
     parser.add_argument("--dry-run", action="store_true", help="export and verify, write nothing to the cloud")
+    parser.add_argument("--no-notify", action="store_true", help="do not send a Feishu message when the run fails")
+    parser.add_argument("--test-notify", action="store_true", help="send a test Feishu message and exit")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.test_notify:
+        ok = notify.send(f"[wechat-vault] 通知测试 source={args.source} host={socket.gethostname()}")
+        log(f"[incremental] test notification {'sent' if ok else 'NOT sent'}")
+        return 0 if ok else 1
     try:
         with single_instance(f"wechat-vault-incremental-{args.source}"):
             run(args)
@@ -181,7 +190,12 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:
         # SDK exception bodies can carry signed request details; only our own errors are printed in full.
         detail = str(exc) if isinstance(exc, (RuntimeError, ValueError)) else ""
-        log(f"[incremental] FAILED: {type(exc).__name__} {detail}".rstrip())
+        message = f"{type(exc).__name__} {detail}".rstrip()
+        log(f"[incremental] FAILED: {message}")
+        if not args.no_notify:
+            sent = notify.send(
+                f"[wechat-vault] 微信增量同步失败 source={args.source} host={socket.gethostname()}\n{message}")
+            log(f"[incremental] failure notification {'sent' if sent else 'NOT sent'}")
         return 1
     log("[incremental] done")
     return 0

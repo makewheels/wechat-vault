@@ -52,7 +52,8 @@ foreach ($proxy in $Proxies) {
     }
     Set-Location $Repo
     $env:PYTHONIOENCODING = 'utf-8'
-    uv run --system-certs --offline python -u -m wechat_vault.incremental --account-root $AccountRoot --source win @Extra 2>&1 |
+    $notify = if ($proxy -eq $Proxies[-1]) { @() } else { @('--no-notify') }  # only the last attempt may notify
+    uv run --system-certs --offline python -u -m wechat_vault.incremental --account-root $AccountRoot --source win @notify @Extra 2>&1 |
         ForEach-Object { "$_" } | Add-Content -Encoding utf8 $Log
     $code = $LASTEXITCODE
     if ($code -eq 0) { break }
